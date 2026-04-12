@@ -101,6 +101,29 @@ The Cargo workspace keeps crates isolated. `eremite-inference` and `eremite-core
 | Models | GGUF format | Quantized model storage and loading |
 | Model source | Hugging Face Hub | Public model downloads |
 
+## Testing
+
+### Principles
+
+- **Configurable, not hardcoded.** Structs accept paths and URLs as constructor parameters rather than hardcoding values like `~/.eremite/` or `https://huggingface.co`. Tests pass temp directories and mock server URLs.
+- **No network or GPU in default `cargo test`.** Tests requiring real network or hardware use `#[ignore]`. Default `cargo test` is fast and runs anywhere, including CI without a GPU.
+- **Mock at the network level.** Use `wiremock` to spin up a real HTTP server on localhost rather than introducing traits/generics just for testing. The production HTTP client (`reqwest`) is used in tests -- only the URL changes.
+- **Traits at crate boundaries when needed.** When one crate depends on another's behavior (e.g., `eremite-core` using inference), define a trait for that boundary so the dependent crate can be tested with a mock implementation. Introduce these traits when the crates are built, not upfront.
+- **Isolate for parallel execution.** `cargo test` runs tests in parallel by default. Each test that touches the filesystem uses its own `tempfile::TempDir` so concurrent tests never interfere with each other.
+
+### Test Locations
+
+- **Unit tests** live inline in each module as `#[cfg(test)] mod tests` with `use super::*;` to access the parent module's items. These test internal logic: serialization, path construction, hashing, state management, etc. They can test private functions directly.
+- **Integration tests** live in each crate's `tests/` directory. Each file compiles as a separate crate with access to the **public API only**. These verify end-to-end workflows within a crate using mocked externals.
+- **Doc tests** live in `///` doc comments on public types and functions. `cargo test` runs code examples in doc comments automatically, keeping documentation accurate. Add these to key public API entry points.
+- **Ignored tests** (`#[ignore]`) cover scenarios that need real external resources (network, GPU). Run manually or on a schedule, not on every PR.
+- **Shared test utilities** start as local `#[cfg(test)]` helpers within each crate. If multiple crates need the same helpers, extract them into a `crates/eremite-test-utils/` crate and add it as a `[dev-dependency]` in each consuming crate's `Cargo.toml`.
+
+### CI
+
+- `cargo test --workspace` -- runs all non-ignored tests (unit, integration, doc). PR gate.
+- `cargo test --workspace -- --ignored` -- runs network/GPU tests. Scheduled or manual.
+
 ## Platform Support
 
 The initial target is **macOS** with Metal GPU acceleration. The architecture supports future expansion to:
