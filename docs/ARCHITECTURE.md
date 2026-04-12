@@ -8,8 +8,8 @@ Eremite is a local LLM application that lets users download open source models a
 graph TD
     UI["React Frontend"] -->|"Tauri IPC (commands + events)"| TauriShell["src-tauri"]
     TauriShell --> Core["eremite-core"]
+    TauriShell --> ModelMgr["eremite-models"]
     Core --> Inference["eremite-inference (llama.cpp)"]
-    Core --> ModelMgr["eremite-models"]
     ModelMgr -->|"HTTPS downloads only"| HFHub["Hugging Face Hub"]
     Inference --> Metal["Metal GPU"]
 ```
@@ -19,6 +19,10 @@ graph TD
 ### eremite-core
 
 Core engine library. Manages conversation state, configuration, and inference orchestration. All business logic lives here -- not in the frontend or the Tauri layer.
+
+`eremite-core` depends only on `eremite-inference` -- it does **not** depend on `eremite-models`. This keeps networking crates (`reqwest`, `tokio`, etc.) completely out of core's dependency tree. Core accepts model file paths directly (`&Path`); the Tauri layer resolves those paths via `eremite-models` before passing them to core.
+
+The crate defines an `InferenceProvider` trait that abstracts the inference boundary, allowing core to be tested with a mock implementation that requires no GPU or GGUF model. The production implementation (`LlamaInference`) wraps `eremite-inference::InferenceEngine`.
 
 ### eremite-inference
 
@@ -41,7 +45,7 @@ This is the **only crate with network access** in the entire project.
 
 ### src-tauri
 
-The Tauri v2 application shell. Wires `eremite-core`'s Rust API to Tauri commands and events for the frontend to consume.
+The Tauri v2 application shell. Wires `eremite-core`'s Rust API to Tauri commands and events for the frontend to consume. This is the integration layer that connects `eremite-models` (model discovery and download) with `eremite-core` (inference orchestration) -- for example, resolving a model's on-disk path via `ModelManager::model_path()` and passing it to `CoreEngine::load_model()`.
 
 ### React Frontend
 
@@ -81,6 +85,14 @@ eremite/
     tauri.conf.json
   crates/
     eremite-core/              # Core engine library (all business logic lives here)
+      src/
+        lib.rs                 # Public API re-exports
+        config.rs              # CoreConfig: inference defaults, system prompt
+        conversation.rs        # Conversation, Message, ConversationId
+        inference.rs           # InferenceProvider trait + LlamaInference impl
+        engine.rs              # CoreEngine: orchestration, conversation CRUD, send_message
+      tests/
+        engine.rs              # Integration tests with MockInference (no GPU required)
     eremite-inference/         # llama.cpp bindings, inference logic (offline only)
       src/
         lib.rs                 # Public API re-exports
@@ -102,7 +114,7 @@ eremite/
 
 This follows standard Tauri conventions (`src/`, `src-tauri/`, root-level frontend config) with an added `crates/` directory for the Rust library code. Tauri CLI commands (`npx tauri dev`, `npx tauri build`) work without extra configuration.
 
-The Cargo workspace keeps crates isolated. `eremite-inference` and `eremite-core` will never have networking crates in their dependency tree -- this is the structural privacy guarantee.
+The Cargo workspace keeps crates isolated. `eremite-core` depends only on `eremite-inference`, and `eremite-inference` has no network or async runtime dependencies. Neither crate depends on `eremite-models`, so networking crates (`reqwest`, `hyper`, `tokio`, etc.) never appear in their dependency trees -- this is the structural privacy guarantee, verifiable by inspecting their `Cargo.toml` files.
 
 ## Technology Stack
 

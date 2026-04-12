@@ -71,17 +71,30 @@ React was chosen for ecosystem depth and contributor accessibility. The performa
 
 The Rust code is split into separate crates (`eremite-core`, `eremite-inference`, `eremite-models`). This keeps dependency trees isolated -- the inference crate doesn't pull in UI dependencies and vice versa -- and allows independent compilation and testing.
 
+### Crate dependency boundaries: core does not depend on models
+
+`eremite-core` depends only on `eremite-inference`. It does **not** depend on `eremite-models`. This keeps the entire dependency tree for core and inference free of networking crates (`reqwest`, `hyper`, `tokio`, etc.) -- a structural guarantee, not just a convention.
+
+Core accepts model file paths (`&Path`) directly. The `src-tauri` layer is the integration point that wires `eremite-models` (for model discovery and downloads) with `eremite-core` (for inference orchestration), passing model paths from one to the other.
+
+**Alternatives considered:**
+
+- **Core depends on `eremite-models` for local queries only (list, get, model_path)**: Simpler API surface for model loading, but `reqwest` and `tokio` would appear in core's transitive dependency tree via `eremite-models`. The "no networking" claim would rely on code-level discipline rather than structural enforcement.
+- **Feature-gated dependency**: `eremite-models` could expose a `no-network` feature that excludes `reqwest`/`tokio`, but feature flags add complexity and are easy to misconfigure.
+
+Keeping the dependency boundary at the crate level makes the privacy guarantee trivially auditable: inspect `eremite-core/Cargo.toml` and confirm `eremite-models` is absent.
+
 ## 2. Private
 
 ### Offline by design
 
-Privacy in Eremite is not an added feature -- it is a structural property of the codebase. The `eremite-inference` and `eremite-core` crates have zero network dependencies. Once a model is downloaded, the application never contacts the internet. There is no telemetry, no account system, and no server dependency.
+Privacy in Eremite is not an added feature -- it is a structural property of the codebase. The `eremite-inference` and `eremite-core` crates have zero network dependencies -- not even transitively. `eremite-core` depends only on `eremite-inference`, and neither crate depends on `eremite-models`. Once a model is downloaded, the application never contacts the internet. There is no telemetry, no account system, and no server dependency.
 
-The only crate with network access is `eremite-models`, which downloads models from the public Hugging Face Hub over HTTPS. This is the sole network interaction in the entire application.
+The only crate with network access is `eremite-models`, which downloads models from the public Hugging Face Hub over HTTPS. This is the sole network interaction in the entire application. The `src-tauri` layer is the only place that depends on both `eremite-models` and `eremite-core`, bridging model paths from one to the other.
 
 ### Open source as proof
 
-The MIT license and open codebase mean anyone can audit the privacy claims. The structural guarantee is verifiable: inspect the `Cargo.toml` files for `eremite-inference` and `eremite-core` to confirm that no networking crates (`reqwest`, `hyper`, etc.) appear in their dependency trees.
+The MIT license and open codebase mean anyone can audit the privacy claims. The structural guarantee is verifiable: inspect the `Cargo.toml` files for `eremite-inference` and `eremite-core` to confirm that neither depends on `eremite-models` and no networking crates (`reqwest`, `hyper`, etc.) appear anywhere in their dependency trees.
 
 ## 3. Free and Open Source
 
