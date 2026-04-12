@@ -102,6 +102,12 @@ eremite/
       tests/
         inference.rs           # Integration tests (require a real GGUF model, #[ignore])
     eremite-models/            # Model download and management (only crate with network)
+      src/
+        lib.rs                 # Public API: ModelManager
+        download.rs            # HTTP download, SHA-256 hashing, progress callback
+        manifest.rs            # Manifest persistence (JSON), ModelEntry
+      tests/
+        manager.rs             # Integration tests with wiremock (no real network)
   docs/                        # Architecture and design docs
   index.html                   # Vite entry point
   package.json                 # Frontend dependencies
