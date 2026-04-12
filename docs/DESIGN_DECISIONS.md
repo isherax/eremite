@@ -4,16 +4,41 @@ This document captures the rationale behind Eremite's technology choices, organi
 
 ## 1. Lightweight and Performant
 
-### Inference: llama.cpp via Rust bindings
+### Inference: llama.cpp via `llama-cpp-2` Rust bindings
 
 llama.cpp is a battle-tested C++ inference engine with excellent quantization support (Q4, Q5, Q8, etc.), Metal acceleration on macOS, and active development. Rust bindings add minimal overhead while giving the surrounding application code memory safety.
+
+The `llama-cpp-2` crate (from [`utilityai/llama-cpp-rs`](https://github.com/utilityai/llama-cpp-rs)) provides safe wrappers around nearly direct bindings to llama.cpp. It compiles llama.cpp from source via its `llama-cpp-sys-2` sys crate, so Metal GPU support on macOS is automatic with no feature flag required.
 
 **Alternatives considered:**
 
 - **Candle** (Hugging Face's pure Rust ML framework): Keeps the entire stack in Rust, but has narrower model coverage and is less mature than llama.cpp.
 - **Burn** (Rust ML framework): Similar trade-offs to Candle. Less ecosystem support for LLM-specific workloads.
+- **`llama_cpp-rs`** (edgenai): Higher-level Rust bindings for llama.cpp, but last updated in June 2024. The `llama-cpp-2` crate is actively maintained with frequent releases tracking upstream llama.cpp changes.
 
-llama.cpp was chosen for its broad model compatibility, proven Metal acceleration, and active community.
+llama.cpp was chosen for its broad model compatibility, proven Metal acceleration, and active community. `llama-cpp-2` was chosen over `llama_cpp-rs` for active maintenance and closer alignment with upstream.
+
+### Token streaming: synchronous callbacks
+
+`eremite-inference` streams generated tokens to callers via a synchronous `FnMut(InferenceEvent)` callback. This matches the progress callback pattern already used in `eremite-models` for download progress.
+
+**Alternatives considered:**
+
+- **`tokio::sync::mpsc` channel**: More natural for async consumers, but would force `eremite-inference` to depend on `tokio`. The inference crate is a pure synchronous compute crate -- adding an async runtime dependency contradicts the "no unnecessary dependencies" principle and couples it to a specific executor.
+- **Returning a `Stream` / `Iterator`**: Clean API but harder to implement efficiently with the llama.cpp decode loop, which is inherently push-based.
+
+Callbacks keep the crate dependency-free with respect to async runtimes. Callers that need async (e.g., `eremite-core` bridging to Tauri events) capture a channel sender in the callback closure.
+
+### Chat template application in the inference crate
+
+`eremite-inference` exposes both a raw `generate(prompt)` method and a `generate_chat(messages)` method. The chat method uses the model's embedded chat template (read by llama.cpp from the GGUF metadata) to format conversations.
+
+**Alternatives considered:**
+
+- **Formatting in `eremite-core`**: Would separate conversation logic from inference, but requires core to reimplement per-model chat template parsing -- a fragile process since templates vary significantly across model families (ChatML, Llama, Mistral, etc.).
+- **Exposing only the raw template string**: Flexible but pushes complexity to the caller and duplicates work that llama.cpp already handles correctly.
+
+The model knows its own template best. Exposing both raw and chat-aware APIs gives `eremite-core` full flexibility without forcing it to reimplement template logic.
 
 ### Model format: GGUF (quantized)
 

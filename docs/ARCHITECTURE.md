@@ -22,9 +22,16 @@ Core engine library. Manages conversation state, configuration, and inference or
 
 ### eremite-inference
 
-Wraps [llama.cpp](https://github.com/ggerganov/llama.cpp) via Rust bindings. Handles model loading, tokenization, and inference. Targets the GGUF model format with Metal GPU acceleration on macOS.
+Wraps [llama.cpp](https://github.com/ggerganov/llama.cpp) via the [`llama-cpp-2`](https://github.com/utilityai/llama-cpp-rs) Rust bindings. Handles model loading, tokenization, sampling, and inference. Targets the GGUF model format with Metal GPU acceleration on macOS.
 
-This crate has **no network dependencies**. It is fully offline by design.
+The public API centers on `InferenceEngine`, which loads a GGUF model and exposes two generation methods:
+
+- `generate(prompt, params, callback)` -- raw text completion from a prompt string.
+- `generate_chat(messages, params, callback)` -- applies the model's embedded chat template to a list of `ChatMessage` structs, then generates. Using the model's own template avoids the fragile and error-prone task of reimplementing per-model formatting outside the inference layer.
+
+Both methods stream tokens to the caller via a synchronous `FnMut(InferenceEvent)` callback. This keeps the crate free of async runtime dependencies (`tokio`, etc.) and matches the callback pattern used in `eremite-models` for download progress. Callers that need async (e.g., `eremite-core` bridging to Tauri events) wrap the callback with a channel sender.
+
+This crate has **no network or async runtime dependencies**. It is fully offline by design.
 
 ### eremite-models
 
@@ -75,6 +82,13 @@ eremite/
   crates/
     eremite-core/              # Core engine library (all business logic lives here)
     eremite-inference/         # llama.cpp bindings, inference logic (offline only)
+      src/
+        lib.rs                 # Public API re-exports
+        engine.rs              # InferenceEngine: load, generate, generate_chat
+        params.rs              # InferenceParams, ChatMessage
+        event.rs               # InferenceEvent enum for callbacks
+      tests/
+        inference.rs           # Integration tests (require a real GGUF model, #[ignore])
     eremite-models/            # Model download and management (only crate with network)
   docs/                        # Architecture and design docs
   index.html                   # Vite entry point
@@ -94,7 +108,7 @@ The Cargo workspace keeps crates isolated. `eremite-inference` and `eremite-core
 
 | Layer | Technology | Role |
 |---|---|---|
-| Inference | llama.cpp (via Rust bindings) | Model loading, tokenization, inference, Metal GPU |
+| Inference | llama.cpp (via `llama-cpp-2` Rust bindings) | Model loading, tokenization, inference, Metal GPU |
 | Core | Rust | Business logic, state management, orchestration |
 | App shell | Tauri v2 | Native window, IPC, system integration |
 | Frontend | React + TypeScript + Vite | UI rendering, user interaction |
