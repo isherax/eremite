@@ -1,4 +1,5 @@
 /// Parameters controlling text generation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InferenceParams {
     /// Maximum number of tokens to generate.
     pub max_tokens: u32,
