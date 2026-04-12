@@ -18,7 +18,7 @@ graph TD
 
 ### eremite-core
 
-Core engine library. Manages conversation state, configuration, and inference orchestration. All business logic lives here -- not in the frontend or the Tauri layer.
+Core engine library. Manages conversation state, configuration, and inference orchestration. All application logic lives here -- not in the frontend or the Tauri layer.
 
 `eremite-core` depends only on `eremite-inference` -- it does **not** depend on `eremite-models`. This keeps networking crates (`reqwest`, `tokio`, etc.) completely out of core's dependency tree. Core accepts model file paths directly (`&Path`); the Tauri layer resolves those paths via `eremite-models` before passing them to core.
 
@@ -84,7 +84,7 @@ eremite/
     Cargo.toml                 # Depends on eremite-core, eremite-inference, eremite-models
     tauri.conf.json
   crates/
-    eremite-core/              # Core engine library (all business logic lives here)
+    eremite-core/              # Core engine library (all application logic lives here)
       src/
         lib.rs                 # Public API re-exports
         config.rs              # CoreConfig: inference defaults, system prompt
@@ -127,7 +127,7 @@ The Cargo workspace keeps crates isolated. `eremite-core` depends only on `eremi
 | Layer | Technology | Role |
 |---|---|---|
 | Inference | llama.cpp (via `llama-cpp-2` Rust bindings) | Model loading, tokenization, inference, Metal GPU |
-| Core | Rust | Business logic, state management, orchestration |
+| Core | Rust | Application logic, state management, orchestration |
 | App shell | Tauri v2 | Native window, IPC, system integration |
 | Frontend | React + TypeScript + Vite | UI rendering, user interaction |
 | Models | GGUF format | Quantized model storage and loading |
