@@ -1,6 +1,7 @@
 mod config;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use eremite_core::{CoreConfig, CoreEngine, ConversationId, LlamaInference, Message};
@@ -8,7 +9,7 @@ use eremite_inference::{InferenceEvent, ModelMetadata};
 use eremite_models::manifest::ModelEntry;
 use eremite_models::ModelManager;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tokio::sync::mpsc;
 
 use crate::config::{AppConfig, ModelRef};
@@ -133,6 +134,7 @@ struct AppState {
     config_path: PathBuf,
     startup_status: Arc<Mutex<StartupStatus>>,
     loaded_model_ref: Arc<Mutex<Option<ModelRef>>>,
+    shutdown: Arc<AtomicBool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +295,7 @@ async fn send_message(
         .ok_or_else(|| "no active conversation".to_string())?;
 
     let engine = Arc::clone(&state.engine);
+    let shutdown = Arc::clone(&state.shutdown);
     let (tx, mut rx) = mpsc::unbounded_channel::<InferenceEvent>();
 
     let join_handle = tauri::async_runtime::spawn_blocking(move || {
@@ -301,7 +304,7 @@ async fn send_message(
         engine
             .send_message(conv_id, &content, &mut |event| {
                 let _ = tx.send(event);
-            })
+            }, &shutdown)
             .map_err(|e| format!("inference failed: {e}"))
     });
 
@@ -399,6 +402,7 @@ pub fn run() {
     };
 
     let loaded_model_ref: Arc<Mutex<Option<ModelRef>>> = Arc::new(Mutex::new(None));
+    let shutdown = Arc::new(AtomicBool::new(false));
 
     // Prepare eager-load data (resolve path before Tauri starts)
     let eager_load = auto_target.as_ref().map(|target| {
@@ -414,10 +418,12 @@ pub fn run() {
         config_path,
         startup_status: Arc::clone(&startup_status),
         loaded_model_ref: Arc::clone(&loaded_model_ref),
+        shutdown: Arc::clone(&shutdown),
     };
 
     // 4. Build the Tauri app; spawn the eager load inside setup() for AppHandle access
-    tauri::Builder::default()
+    let shutdown_for_setup = Arc::clone(&shutdown);
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(app_state)
         .setup(move |app| {
@@ -425,6 +431,7 @@ pub fn run() {
                 let engine_clone = Arc::clone(&engine);
                 let status_clone = Arc::clone(&startup_status);
                 let model_ref_clone = Arc::clone(&loaded_model_ref);
+                let shutdown_clone = Arc::clone(&shutdown_for_setup);
                 let handle = app.handle().clone();
 
                 std::thread::spawn(move || {
@@ -432,6 +439,10 @@ pub fn run() {
                         let mut eng = engine_clone.lock().unwrap();
                         eng.load_model(&path)
                     };
+
+                    if shutdown_clone.load(Ordering::Relaxed) {
+                        return;
+                    }
 
                     match result {
                         Ok(metadata) => {
@@ -444,7 +455,6 @@ pub fn run() {
                                 filename: target.filename.clone(),
                             };
 
-                            // Create a default conversation
                             {
                                 let mut eng = engine_clone.lock().unwrap();
                                 eng.create_conversation(None);
@@ -485,6 +495,30 @@ pub fn run() {
             send_message,
             get_messages,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    let shutdown_for_exit = Arc::clone(&shutdown);
+    app.run(move |app_handle, event| {
+        if let RunEvent::ExitRequested { api, .. } = &event {
+            shutdown_for_exit.store(true, Ordering::Relaxed);
+            api.prevent_exit();
+
+            let engine = {
+                let state = app_handle.state::<AppState>();
+                Arc::clone(&state.engine)
+            };
+            let handle = app_handle.clone();
+
+            std::thread::spawn(move || {
+                // Acquiring the lock waits for any in-flight inference to
+                // finish (it will see the shutdown flag and bail early).
+                // Once we hold the lock, no new work can start. Dropping
+                // the guard lets Tauri tear down the engine via normal RAII.
+                let _guard = engine.lock().unwrap_or_else(|e| e.into_inner());
+                drop(_guard);
+                handle.exit(0);
+            });
+        }
+    });
 }

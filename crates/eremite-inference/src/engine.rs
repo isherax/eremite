@@ -6,6 +6,7 @@
 
 use std::num::NonZeroU32;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -70,6 +71,7 @@ impl InferenceEngine {
         prompt: &str,
         params: &InferenceParams,
         mut on_event: impl FnMut(InferenceEvent),
+        shutdown: &AtomicBool,
     ) -> Result<String> {
         let start = Instant::now();
 
@@ -113,6 +115,10 @@ impl InferenceEngine {
         let mut output = String::new();
 
         while tokens_generated < params.max_tokens {
+            if shutdown.load(Ordering::Relaxed) {
+                bail!("inference cancelled: shutting down");
+            }
+
             let token = sampler.sample(&ctx, batch.n_tokens() - 1);
             sampler.accept(token);
 
@@ -158,6 +164,7 @@ impl InferenceEngine {
         messages: &[ChatMessage],
         params: &InferenceParams,
         on_event: impl FnMut(InferenceEvent),
+        shutdown: &AtomicBool,
     ) -> Result<String> {
         let llama_messages: Vec<LlamaChatMessage> = messages
             .iter()
@@ -177,7 +184,7 @@ impl InferenceEngine {
             .apply_chat_template(&template, &llama_messages, true)
             .map_err(|e| anyhow::anyhow!("failed to apply chat template: {e:?}"))?;
 
-        self.generate(&prompt, params, on_event)
+        self.generate(&prompt, params, on_event, shutdown)
     }
 
     /// Read metadata from the loaded model.

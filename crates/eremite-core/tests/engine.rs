@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::Result;
 use eremite_inference::{ChatMessage, InferenceEvent, InferenceParams, ModelMetadata};
@@ -46,6 +47,7 @@ impl InferenceProvider for MockInference {
         messages: &[ChatMessage],
         _params: &InferenceParams,
         on_event: &mut dyn FnMut(InferenceEvent),
+        _shutdown: &AtomicBool,
     ) -> Result<String> {
         self.last_messages = messages
             .iter()
@@ -68,6 +70,7 @@ impl InferenceProvider for MockInference {
         _prompt: &str,
         _params: &InferenceParams,
         on_event: &mut dyn FnMut(InferenceEvent),
+        _shutdown: &AtomicBool,
     ) -> Result<String> {
         on_event(InferenceEvent::Token(self.response.clone()));
         on_event(InferenceEvent::Done {
@@ -84,6 +87,10 @@ impl InferenceProvider for MockInference {
 
 fn make_engine(response: &str) -> CoreEngine<MockInference> {
     CoreEngine::new(MockInference::new(response), CoreConfig::default())
+}
+
+fn no_shutdown() -> AtomicBool {
+    AtomicBool::new(false)
 }
 
 // -- Tests ----------------------------------------------------------------
@@ -140,10 +147,11 @@ fn delete_nonexistent_conversation() {
 fn send_message_adds_user_and_assistant_messages() {
     let mut engine = make_engine("I'm doing well, thanks!");
     let id = engine.create_conversation(None);
+    let shutdown = no_shutdown();
 
     let mut events = Vec::new();
     let response = engine
-        .send_message(id, "How are you?", &mut |e| events.push(e))
+        .send_message(id, "How are you?", &mut |e| events.push(e), &shutdown)
         .unwrap();
 
     assert_eq!(response, "I'm doing well, thanks!");
@@ -160,6 +168,7 @@ fn send_message_adds_user_and_assistant_messages() {
 fn send_message_streams_token_events() {
     let mut engine = make_engine("hello world");
     let id = engine.create_conversation(None);
+    let shutdown = no_shutdown();
 
     let mut tokens = Vec::new();
     let mut got_done = false;
@@ -167,7 +176,7 @@ fn send_message_streams_token_events() {
         .send_message(id, "hi", &mut |e| match e {
             InferenceEvent::Token(t) => tokens.push(t),
             InferenceEvent::Done { .. } => got_done = true,
-        })
+        }, &shutdown)
         .unwrap();
 
     assert_eq!(tokens, vec!["hello ", "world "]);
@@ -178,8 +187,9 @@ fn send_message_streams_token_events() {
 fn send_message_to_nonexistent_conversation_returns_error() {
     let mut engine = make_engine("hello");
     let fake_id = ConversationId::new();
+    let shutdown = no_shutdown();
 
-    let result = engine.send_message(fake_id, "hi", &mut |_| {});
+    let result = engine.send_message(fake_id, "hi", &mut |_| {}, &shutdown);
     assert!(result.is_err());
 }
 
@@ -187,9 +197,10 @@ fn send_message_to_nonexistent_conversation_returns_error() {
 fn conversation_history_accumulates() {
     let mut engine = make_engine("response");
     let id = engine.create_conversation(None);
+    let shutdown = no_shutdown();
 
-    engine.send_message(id, "first", &mut |_| {}).unwrap();
-    engine.send_message(id, "second", &mut |_| {}).unwrap();
+    engine.send_message(id, "first", &mut |_| {}, &shutdown).unwrap();
+    engine.send_message(id, "second", &mut |_| {}, &shutdown).unwrap();
 
     let conv = engine.conversation(id).unwrap();
     assert_eq!(conv.messages().len(), 4);
@@ -203,8 +214,9 @@ fn conversation_history_accumulates() {
 fn system_prompt_included_in_conversation() {
     let mut engine = make_engine("ok");
     let id = engine.create_conversation(Some("You are helpful.".to_string()));
+    let shutdown = no_shutdown();
 
-    engine.send_message(id, "hi", &mut |_| {}).unwrap();
+    engine.send_message(id, "hi", &mut |_| {}, &shutdown).unwrap();
 
     let conv = engine.conversation(id).unwrap();
     assert_eq!(conv.system_prompt(), Some("You are helpful."));
@@ -255,12 +267,13 @@ fn load_model_populates_metadata() {
 #[test]
 fn multiple_conversations_are_independent() {
     let mut engine = make_engine("reply");
+    let shutdown = no_shutdown();
 
     let id1 = engine.create_conversation(Some("Prompt A".to_string()));
-    engine.send_message(id1, "msg1", &mut |_| {}).unwrap();
+    engine.send_message(id1, "msg1", &mut |_| {}, &shutdown).unwrap();
 
     let id2 = engine.create_conversation(Some("Prompt B".to_string()));
-    engine.send_message(id2, "msg2", &mut |_| {}).unwrap();
+    engine.send_message(id2, "msg2", &mut |_| {}, &shutdown).unwrap();
 
     let conv1 = engine.conversation(id1).unwrap();
     let conv2 = engine.conversation(id2).unwrap();
@@ -277,9 +290,10 @@ fn multiple_conversations_are_independent() {
 #[test]
 fn generate_raw_prompt() {
     let mut engine = make_engine("generated text");
+    let shutdown = no_shutdown();
 
     let mut events = Vec::new();
-    let result = engine.generate("Tell me a joke", &mut |e| events.push(e)).unwrap();
+    let result = engine.generate("Tell me a joke", &mut |e| events.push(e), &shutdown).unwrap();
 
     assert_eq!(result, "generated text");
     assert!(!events.is_empty());

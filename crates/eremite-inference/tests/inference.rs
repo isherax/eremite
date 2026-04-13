@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 
 use eremite_inference::{ChatMessage, InferenceEngine, InferenceEvent, InferenceParams};
 
@@ -32,10 +33,11 @@ fn generate_produces_tokens() {
     let mut engine = InferenceEngine::load(test_model_path(), &params).unwrap();
     let mut events: Vec<InferenceEvent> = Vec::new();
 
+    let shutdown = AtomicBool::new(false);
     let output = engine
         .generate("The capital of France is", &params, |e| {
             events.push(e);
-        })
+        }, &shutdown)
         .unwrap();
 
     assert!(!output.is_empty(), "expected non-empty output");
@@ -66,8 +68,9 @@ fn generate_chat_applies_template() {
         ChatMessage::user("What is 2 + 2?"),
     ];
 
+    let shutdown = AtomicBool::new(false);
     let output = engine
-        .generate_chat(&messages, &params, |_| {})
+        .generate_chat(&messages, &params, |_| {}, &shutdown)
         .unwrap();
 
     assert!(!output.is_empty(), "expected non-empty chat output");

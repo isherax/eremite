@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::{bail, Result};
 use eremite_inference::{InferenceEvent, InferenceParams, ModelMetadata};
@@ -116,6 +117,7 @@ impl<I: InferenceProvider> CoreEngine<I> {
         conversation_id: ConversationId,
         content: &str,
         on_event: &mut dyn FnMut(InferenceEvent),
+        shutdown: &AtomicBool,
     ) -> Result<String> {
         let conv = self
             .conversations
@@ -129,7 +131,7 @@ impl<I: InferenceProvider> CoreEngine<I> {
 
         let response = self
             .inference
-            .generate_chat(&chat_messages, params, on_event)?;
+            .generate_chat(&chat_messages, params, on_event, shutdown)?;
 
         let conv = self
             .conversations
@@ -145,8 +147,9 @@ impl<I: InferenceProvider> CoreEngine<I> {
         &mut self,
         prompt: &str,
         on_event: &mut dyn FnMut(InferenceEvent),
+        shutdown: &AtomicBool,
     ) -> Result<String> {
         self.inference
-            .generate(prompt, &self.config.inference_params, on_event)
+            .generate(prompt, &self.config.inference_params, on_event, shutdown)
     }
 }

@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::Result;
 use eremite_inference::{ChatMessage, InferenceEngine, InferenceEvent, InferenceParams, ModelMetadata};
@@ -13,6 +14,7 @@ pub trait InferenceProvider {
         messages: &[ChatMessage],
         params: &InferenceParams,
         on_event: &mut dyn FnMut(InferenceEvent),
+        shutdown: &AtomicBool,
     ) -> Result<String>;
 
     fn generate(
@@ -20,6 +22,7 @@ pub trait InferenceProvider {
         prompt: &str,
         params: &InferenceParams,
         on_event: &mut dyn FnMut(InferenceEvent),
+        shutdown: &AtomicBool,
     ) -> Result<String>;
 
     fn model_metadata(&self) -> Option<&ModelMetadata>;
@@ -60,12 +63,13 @@ impl InferenceProvider for LlamaInference {
         messages: &[ChatMessage],
         params: &InferenceParams,
         on_event: &mut dyn FnMut(InferenceEvent),
+        shutdown: &AtomicBool,
     ) -> Result<String> {
         let engine = self
             .engine
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("no model loaded"))?;
-        engine.generate_chat(messages, params, on_event)
+        engine.generate_chat(messages, params, on_event, shutdown)
     }
 
     fn generate(
@@ -73,12 +77,13 @@ impl InferenceProvider for LlamaInference {
         prompt: &str,
         params: &InferenceParams,
         on_event: &mut dyn FnMut(InferenceEvent),
+        shutdown: &AtomicBool,
     ) -> Result<String> {
         let engine = self
             .engine
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("no model loaded"))?;
-        engine.generate(prompt, params, on_event)
+        engine.generate(prompt, params, on_event, shutdown)
     }
 
     fn model_metadata(&self) -> Option<&ModelMetadata> {
