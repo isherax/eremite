@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import MarkdownContent from "./MarkdownContent";
 
 interface ModelInfo {
   description: string;
@@ -136,13 +137,21 @@ export default function App() {
 
         {messages.map((msg, i) => (
           <div key={i} className={`message ${msg.role}`}>
-            <div className="message-content">{msg.content}</div>
+            <div className="message-content">
+              {msg.role === "assistant" ? (
+                <MarkdownContent content={msg.content} />
+              ) : (
+                msg.content
+              )}
+            </div>
           </div>
         ))}
 
         {status === "generating" && streamingContent && (
           <div className="message assistant">
-            <div className="message-content">{streamingContent}</div>
+            <div className="message-content">
+              <MarkdownContent content={streamingContent} />
+            </div>
           </div>
         )}
 
