@@ -844,13 +844,17 @@ dependencies = [
 name = "eremite"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "dirs",
  "eremite-core",
  "eremite-inference",
+ "eremite-models",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",
+ "tempfile",
  "tokio",
 ]
 

@@ -42,6 +42,12 @@ impl LlamaInference {
 
 impl InferenceProvider for LlamaInference {
     fn load_model(&mut self, path: &Path, params: &InferenceParams) -> Result<ModelMetadata> {
+        // Drop any existing engine before creating a new one. The llama.cpp
+        // backend is a global singleton; it must be fully torn down before
+        // re-initialization.
+        self.engine = None;
+        self.metadata = None;
+
         let engine = InferenceEngine::load(path, params)?;
         let metadata = engine.model_metadata();
         self.metadata = Some(metadata.clone());
