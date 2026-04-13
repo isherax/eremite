@@ -55,6 +55,7 @@ impl<I: InferenceProvider> CoreEngine<I> {
         self.inference.model_metadata()
     }
 
+
     // -- Conversation management ------------------------------------------
 
     /// Create a new conversation, optionally with a system prompt.

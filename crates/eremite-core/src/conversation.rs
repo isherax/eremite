@@ -1,9 +1,11 @@
 use chrono::{DateTime, Utc};
 use eremite_inference::ChatMessage;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Unique identifier for a conversation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct ConversationId(Uuid);
 
 impl ConversationId {
@@ -19,7 +21,7 @@ impl std::fmt::Display for ConversationId {
 }
 
 /// A single message in a conversation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
     pub content: String,

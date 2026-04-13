@@ -37,11 +37,7 @@ impl InferenceProvider for MockInference {
             n_params: 1_000_000,
             n_ctx_train: 2048,
         };
-        self.metadata = Some(ModelMetadata {
-            description: metadata.description.clone(),
-            n_params: metadata.n_params,
-            n_ctx_train: metadata.n_ctx_train,
-        });
+        self.metadata = Some(metadata.clone());
         Ok(metadata)
     }
 

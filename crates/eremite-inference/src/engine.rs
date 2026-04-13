@@ -16,10 +16,13 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 
+use serde::{Deserialize, Serialize};
+
 use crate::event::InferenceEvent;
 use crate::params::{ChatMessage, InferenceParams};
 
 /// Metadata read from a loaded GGUF model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMetadata {
     /// Human-readable model name from the GGUF `general.name` field.
     pub description: String,

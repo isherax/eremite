@@ -44,12 +44,8 @@ impl InferenceProvider for LlamaInference {
     fn load_model(&mut self, path: &Path, params: &InferenceParams) -> Result<ModelMetadata> {
         let engine = InferenceEngine::load(path, params)?;
         let metadata = engine.model_metadata();
+        self.metadata = Some(metadata.clone());
         self.engine = Some(engine);
-        self.metadata = Some(ModelMetadata {
-            description: metadata.description.clone(),
-            n_params: metadata.n_params,
-            n_ctx_train: metadata.n_ctx_train,
-        });
         Ok(metadata)
     }
 
