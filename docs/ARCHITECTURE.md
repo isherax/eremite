@@ -39,7 +39,7 @@ This crate has **no network or async runtime dependencies**. It is fully offline
 
 ### eremite-models
 
-Downloads GGUF models from Hugging Face Hub, manages local model storage (`~/.eremite/models/`), and tracks model metadata.
+Downloads GGUF models from Hugging Face Hub, manages local model storage (`~/.eremite/models/`), and tracks model metadata. Also exposes read-only discovery against the public Hub `/api/models` HTTP API (search and popular lists).
 
 This is the **only crate with network access** in the entire project.
 
@@ -58,6 +58,8 @@ Tauri commands exposed to the frontend:
 |---|---|
 | `get_startup_state` | Returns startup routing info: whether a model is auto-loading, ready, or no models exist |
 | `list_models` | Lists all downloaded models from the manifest |
+| `search_models` | Queries the public Hugging Face Hub `/api/models` API for GGUF text-generation repos matching a search string |
+| `popular_models` | Fetches top GGUF text-generation repos by download count (same Hub API, no search query) |
 | `download_model` | Downloads a GGUF model from Hugging Face Hub; emits `download:progress` events |
 | `delete_model` | Removes a downloaded model from disk and manifest |
 | `select_model` | Loads a downloaded model into `CoreEngine`, persists `last_used_model` in config |
@@ -79,7 +81,7 @@ Presentation layer inside Tauri's system webview (WebKit on macOS). Lives in `sr
 
 The frontend has two views:
 
-- **Model Library** (`ModelLibrary.tsx`): Download new models by entering a Hugging Face repo ID and filename. View, load, and delete downloaded models.
+- **Model Library** (`ModelLibrary.tsx`): Discover GGUF models via Hugging Face Hub (popular list and search), expand a repo to download a specific file, or use Advanced to download by repo ID and filename. View, load, and delete downloaded models.
 - **Chat** (`Chat.tsx`): Chat interface with streaming token display.
 
 `App.tsx` acts as a state-based router. On mount, it calls `get_startup_state` to determine which view to show and whether a model is being eagerly loaded.
@@ -98,7 +100,7 @@ The frontend has two views:
 
 ### Model Download
 
-1. User enters a Hugging Face repo ID and filename in the Model Library UI.
+1. User picks a GGUF file from the popular list or search results in the Model Library UI, or enters a repo ID and filename under Advanced.
 2. UI invokes `download_model` Tauri command.
 3. `src-tauri` calls `ModelManager::download_with_progress()`.
 4. `eremite-models` streams the GGUF file from Hugging Face Hub over HTTPS.
@@ -165,6 +167,7 @@ eremite/
       src/
         lib.rs                 # Public API: ModelManager
         download.rs            # HTTP download, SHA-256 hashing, progress callback
+        search.rs              # Hugging Face Hub /api/models discovery (GGUF search + popular)
         manifest.rs            # Manifest persistence (JSON), ModelEntry
       tests/
         manager.rs             # Integration tests with wiremock (no real network)

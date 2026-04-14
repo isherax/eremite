@@ -1,5 +1,10 @@
 pub mod download;
 pub mod manifest;
+pub mod search;
+
+pub use search::{
+    default_hub_origin, popular_gguf_models, search_gguf_models, GgufFileInfo, SearchResult,
+};
 
 use std::path::{Path, PathBuf};
 
