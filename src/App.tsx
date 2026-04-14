@@ -30,6 +30,12 @@ interface ModelReady {
 
 type View = "init" | "models" | "chat";
 
+function formatParams(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
+  return n.toLocaleString();
+}
+
 export default function App() {
   const [view, setView] = useState<View>("init");
   const [model, setModel] = useState<ModelInfo | null>(null);
@@ -80,6 +86,12 @@ export default function App() {
     setView("chat");
   }
 
+  const loadingName =
+    loadingModel?.filename ?? loadingModel?.repo_id ?? "model";
+  const chatHeaderTitle =
+    model?.description ?? (loadingModel ? loadingName : "Eremite");
+  const canOpenChat = model !== null || loadingModel !== null;
+
   if (view === "init") {
     return (
       <div className="app">
@@ -90,20 +102,50 @@ export default function App() {
     );
   }
 
-  if (view === "models") {
-    return (
-      <ModelLibrary
-        loadedModelRef={loadedModelRef}
-        onModelLoaded={handleModelLoaded}
-      />
-    );
-  }
-
   return (
-    <Chat
-      model={model}
-      loadingModel={loadingModel}
-      onNavigateToModels={() => setView("models")}
-    />
+    <div className="app">
+      <header className="header">
+        <nav className="nav-tabs" aria-label="Main">
+          <button
+            type="button"
+            className={`nav-tab ${view === "chat" ? "active" : ""}`}
+            onClick={() => canOpenChat && setView("chat")}
+            disabled={!canOpenChat}
+            aria-current={view === "chat" ? "page" : undefined}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            className={`nav-tab ${view === "models" ? "active" : ""}`}
+            onClick={() => setView("models")}
+            aria-current={view === "models" ? "page" : undefined}
+          >
+            Models
+          </button>
+        </nav>
+        {view === "chat" && (
+          <div className="header-chat-context">
+            <span className="header-separator" aria-hidden />
+            <span className="model-name">{chatHeaderTitle}</span>
+            {model && (
+              <span className="model-meta">
+                {formatParams(model.n_params)} params &middot;{" "}
+                {model.n_ctx_train} ctx
+              </span>
+            )}
+          </div>
+        )}
+      </header>
+
+      {view === "models" ? (
+        <ModelLibrary
+          loadedModelRef={loadedModelRef}
+          onModelLoaded={handleModelLoaded}
+        />
+      ) : (
+        <Chat model={model} loadingModel={loadingModel} />
+      )}
+    </div>
   );
 }

@@ -21,23 +21,12 @@ interface ChatMessage {
 
 type ChatStatus = "loading" | "ready" | "generating";
 
-function formatParams(n: number): string {
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
-  return n.toLocaleString();
-}
-
 interface ChatProps {
   model: ModelInfo | null;
   loadingModel: ModelRef | null;
-  onNavigateToModels: () => void;
 }
 
-export default function Chat({
-  model,
-  loadingModel,
-  onNavigateToModels,
-}: ChatProps) {
+export default function Chat({ model, loadingModel }: ChatProps) {
   const [status, setStatus] = useState<ChatStatus>(model ? "ready" : "loading");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -126,23 +115,7 @@ export default function Chat({
     loadingModel?.filename ?? loadingModel?.repo_id ?? "model";
 
   return (
-    <div className="app">
-      <header className="header">
-        <button className="header-nav-button" onClick={onNavigateToModels}>
-          Models
-        </button>
-        <span className="header-separator" />
-        <span className="model-name">
-          {model?.description ?? (status === "loading" ? loadingName : "Eremite")}
-        </span>
-        {model && (
-          <span className="model-meta">
-            {formatParams(model.n_params)} params &middot; {model.n_ctx_train}{" "}
-            ctx
-          </span>
-        )}
-      </header>
-
+    <>
       {status === "loading" ? (
         <main className="messages">
           <div className="loading-state">
@@ -209,6 +182,6 @@ export default function Chat({
           Send
         </button>
       </footer>
-    </div>
+    </>
   );
 }

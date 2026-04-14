@@ -348,12 +348,7 @@ export default function ModelLibrary({
   }
 
   return (
-    <div className="app">
-      <header className="header">
-        <span className="model-name">Model Library</span>
-      </header>
-
-      <main className="model-library">
+    <main className="model-library">
         <section className="popular-section">
           <h3>Popular models</h3>
           <p className="section-hint">
@@ -558,7 +553,6 @@ export default function ModelLibrary({
             </div>
           )}
         </section>
-      </main>
-    </div>
+    </main>
   );
 }
