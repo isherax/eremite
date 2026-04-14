@@ -8,6 +8,7 @@ use eremite_core::{CoreConfig, CoreEngine, ConversationId, LlamaInference, Messa
 use eremite_inference::{InferenceEvent, ModelMetadata};
 use eremite_models::manifest::ModelEntry;
 use eremite_models::ModelManager;
+use eremite_models::SearchResult;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tokio::sync::mpsc;
@@ -186,6 +187,27 @@ fn get_startup_state(state: State<'_, AppState>) -> Result<StartupStateResponse,
 async fn list_models(state: State<'_, AppState>) -> Result<Vec<ModelEntryView>, String> {
     let manager = state.model_manager.lock().await;
     Ok(manager.list().iter().map(ModelEntryView::from).collect())
+}
+
+const HF_SEARCH_LIMIT: u32 = 20;
+const HF_POPULAR_LIMIT: u32 = 12;
+
+#[tauri::command]
+async fn search_models(query: String) -> Result<Vec<SearchResult>, String> {
+    eremite_models::search_gguf_models(
+        eremite_models::default_hub_origin(),
+        &query,
+        HF_SEARCH_LIMIT,
+    )
+    .await
+    .map_err(|e| format!("search failed: {e}"))
+}
+
+#[tauri::command]
+async fn popular_models() -> Result<Vec<SearchResult>, String> {
+    eremite_models::popular_gguf_models(eremite_models::default_hub_origin(), HF_POPULAR_LIMIT)
+        .await
+        .map_err(|e| format!("popular models failed: {e}"))
 }
 
 #[tauri::command]
@@ -489,6 +511,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_startup_state,
             list_models,
+            search_models,
+            popular_models,
             download_model,
             delete_model,
             select_model,
