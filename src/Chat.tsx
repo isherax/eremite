@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import MarkdownContent from "./MarkdownContent";
@@ -44,6 +44,8 @@ export default function Chat({
   const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const streamBufferRef = useRef("");
+  const rafRef = useRef(0);
 
   useEffect(() => {
     if (model) {
@@ -52,8 +54,10 @@ export default function Chat({
   }, [model]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingContent]);
+    messagesEndRef.current?.scrollIntoView({
+      behavior: status === "generating" ? "instant" : "smooth",
+    });
+  }, [messages, streamingContent, status]);
 
   async function handleSend() {
     const content = input.trim();
@@ -61,6 +65,7 @@ export default function Chat({
 
     setMessages((prev) => [...prev, { role: "user", content }]);
     setInput("");
+    if (inputRef.current) inputRef.current.style.height = "auto";
     setStatus("generating");
     setStreamingContent("");
 
@@ -70,7 +75,13 @@ export default function Chat({
       const unlistenToken = await listen<string>(
         "inference:token",
         (event) => {
-          setStreamingContent((prev) => prev + event.payload);
+          streamBufferRef.current += event.payload;
+          if (!rafRef.current) {
+            rafRef.current = requestAnimationFrame(() => {
+              setStreamingContent(streamBufferRef.current);
+              rafRef.current = 0;
+            });
+          }
         },
       );
       unlisteners.push(unlistenToken);
@@ -88,11 +99,21 @@ export default function Chat({
       ]);
     } finally {
       unlisteners.forEach((unlisten) => unlisten());
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      streamBufferRef.current = "";
+      rafRef.current = 0;
       setStreamingContent("");
       setStatus("ready");
       inputRef.current?.focus();
     }
   }
+
+  const adjustHeight = useCallback(() => {
+    const ta = inputRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight}px`;
+  }, []);
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -171,7 +192,10 @@ export default function Chat({
           ref={inputRef}
           className="input"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setInput(e.target.value);
+            adjustHeight();
+          }}
           onKeyDown={handleKeyDown}
           placeholder="Type a message..."
           disabled={status !== "ready"}
