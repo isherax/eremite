@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::{bail, Result};
-use eremite_inference::{InferenceEvent, InferenceParams, ModelMetadata};
+use anyhow::{anyhow, bail, Result};
+use eremite_inference::{InferenceEvent, ModelMetadata};
 
 use crate::config::CoreConfig;
 use crate::conversation::{Conversation, ConversationId, Message};
@@ -42,20 +42,10 @@ impl<I: InferenceProvider> CoreEngine<I> {
             .load_model(model_path, &self.config.inference_params)
     }
 
-    /// Load a model with explicit inference parameters (overriding config defaults).
-    pub fn load_model_with_params(
-        &mut self,
-        model_path: &Path,
-        params: &InferenceParams,
-    ) -> Result<ModelMetadata> {
-        self.inference.load_model(model_path, params)
-    }
-
     /// Return metadata for the currently loaded model, if any.
     pub fn model_metadata(&self) -> Option<&ModelMetadata> {
         self.inference.model_metadata()
     }
-
 
     // -- Conversation management ------------------------------------------
 
@@ -75,11 +65,6 @@ impl<I: InferenceProvider> CoreEngine<I> {
         self.conversations.get(&id)
     }
 
-    /// Return all conversations as a slice of `(id, conversation)` pairs.
-    pub fn conversations(&self) -> Vec<(&ConversationId, &Conversation)> {
-        self.conversations.iter().collect()
-    }
-
     /// Return the active conversation ID, if any.
     pub fn active_conversation(&self) -> Option<ConversationId> {
         self.active_conversation
@@ -88,7 +73,7 @@ impl<I: InferenceProvider> CoreEngine<I> {
     /// Set the active conversation.
     pub fn set_active_conversation(&mut self, id: ConversationId) -> Result<()> {
         if !self.conversations.contains_key(&id) {
-            bail!("conversation {} not found", id);
+            bail!("conversation {id} not found");
         }
         self.active_conversation = Some(id);
         Ok(())
@@ -122,7 +107,7 @@ impl<I: InferenceProvider> CoreEngine<I> {
         let conv = self
             .conversations
             .get_mut(&conversation_id)
-            .ok_or_else(|| anyhow::anyhow!("conversation {} not found", conversation_id))?;
+            .ok_or_else(|| anyhow!("conversation {conversation_id} not found"))?;
 
         conv.add_message(Message::user(content));
 
@@ -136,7 +121,7 @@ impl<I: InferenceProvider> CoreEngine<I> {
         let conv = self
             .conversations
             .get_mut(&conversation_id)
-            .expect("conversation disappeared during generation");
+            .ok_or_else(|| anyhow!("conversation {conversation_id} not found"))?;
         conv.add_message(Message::assistant(&response));
 
         Ok(response)

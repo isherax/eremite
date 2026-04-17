@@ -43,6 +43,12 @@ impl LlamaInference {
     }
 }
 
+impl Default for LlamaInference {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InferenceProvider for LlamaInference {
     fn load_model(&mut self, path: &Path, params: &InferenceParams) -> Result<ModelMetadata> {
         // Drop any existing engine before creating a new one. The llama.cpp

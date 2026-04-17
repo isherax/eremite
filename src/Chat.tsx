@@ -2,19 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import MarkdownContent from "./MarkdownContent";
-
-interface ModelInfo {
-  description: string;
-  n_params: number;
-  n_ctx_train: number;
-}
-
-interface ModelRef {
-  repo_id: string;
-  filename: string;
-}
+import type { ModelInfo, ModelRef } from "./types/model";
+import { formatLoadingModelName } from "./utils/format";
 
 interface ChatMessage {
+  id: number;
   role: "user" | "assistant";
   content: string;
 }
@@ -35,6 +27,7 @@ export default function Chat({ model, loadingModel }: ChatProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const streamBufferRef = useRef("");
   const rafRef = useRef(0);
+  const nextMessageIdRef = useRef(1);
 
   useEffect(() => {
     if (model) {
@@ -48,11 +41,18 @@ export default function Chat({ model, loadingModel }: ChatProps) {
     });
   }, [messages, streamingContent, status]);
 
+  function appendMessage(role: "user" | "assistant", content: string) {
+    setMessages((prev) => [
+      ...prev,
+      { id: nextMessageIdRef.current++, role, content },
+    ]);
+  }
+
   async function handleSend() {
     const content = input.trim();
     if (!content || status !== "ready") return;
 
-    setMessages((prev) => [...prev, { role: "user", content }]);
+    appendMessage("user", content);
     setInput("");
     if (inputRef.current) inputRef.current.style.height = "auto";
     setStatus("generating");
@@ -77,15 +77,9 @@ export default function Chat({ model, loadingModel }: ChatProps) {
 
       const fullResponse = await invoke<string>("send_message", { content });
 
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: fullResponse },
-      ]);
+      appendMessage("assistant", fullResponse);
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Error: ${err}` },
-      ]);
+      appendMessage("assistant", `Error: ${err}`);
     } finally {
       unlisteners.forEach((unlisten) => unlisten());
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -111,27 +105,31 @@ export default function Chat({ model, loadingModel }: ChatProps) {
     }
   }
 
-  const loadingName =
-    loadingModel?.filename ?? loadingModel?.repo_id ?? "model";
+  const loadingName = formatLoadingModelName(loadingModel);
+  const isGenerating = status === "generating";
 
   return (
     <>
       {status === "loading" ? (
-        <main className="messages">
+        <main className="messages" aria-busy="true" aria-label="Chat">
           <div className="loading-state">
             <p>Loading {loadingName}...</p>
           </div>
         </main>
       ) : (
-        <main className="messages">
+        <main
+          className="messages"
+          aria-busy={isGenerating}
+          aria-label="Chat messages"
+        >
           {messages.length === 0 && status === "ready" && (
             <div className="empty-state">
               <p>Send a message to start chatting.</p>
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <div key={i} className={`message ${msg.role}`}>
+          {messages.map((msg) => (
+            <div key={msg.id} className={`message ${msg.role}`}>
               <div className="message-content">
                 {msg.role === "assistant" ? (
                   <MarkdownContent content={msg.content} />
@@ -142,7 +140,7 @@ export default function Chat({ model, loadingModel }: ChatProps) {
             </div>
           ))}
 
-          {status === "generating" && streamingContent && (
+          {isGenerating && streamingContent && (
             <div className="message assistant">
               <div className="message-content">
                 <MarkdownContent content={streamingContent} />
@@ -150,7 +148,7 @@ export default function Chat({ model, loadingModel }: ChatProps) {
             </div>
           )}
 
-          {status === "generating" && !streamingContent && (
+          {isGenerating && !streamingContent && (
             <div className="message assistant">
               <div className="message-content thinking">Thinking...</div>
             </div>
@@ -171,6 +169,7 @@ export default function Chat({ model, loadingModel }: ChatProps) {
           }}
           onKeyDown={handleKeyDown}
           placeholder="Type a message..."
+          aria-label="Message input"
           disabled={status !== "ready"}
           rows={1}
         />

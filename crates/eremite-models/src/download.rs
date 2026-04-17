@@ -5,14 +5,14 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-const DEFAULT_BASE_URL: &str = "https://huggingface.co";
+use crate::search::default_hub_origin;
 
 pub fn build_download_url(base_url: &str, repo_id: &str, filename: &str) -> String {
-    format!("{}/{}/resolve/main/{}", base_url, repo_id, filename)
+    format!("{base_url}/{repo_id}/resolve/main/{filename}")
 }
 
 pub fn default_base_url() -> &'static str {
-    DEFAULT_BASE_URL
+    default_hub_origin()
 }
 
 pub struct DownloadResult {
@@ -37,7 +37,7 @@ pub async fn download_file(
 
     let response = reqwest::get(url)
         .await
-        .with_context(|| format!("failed to request {}", url))?;
+        .with_context(|| format!("failed to request {url}"))?;
 
     if !response.status().is_success() {
         bail!(

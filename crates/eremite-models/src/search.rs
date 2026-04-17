@@ -147,7 +147,7 @@ fn guess_quantization_from_filename(name: &str) -> Option<String> {
     let last = stem.rsplit('-').next()?;
     if last.starts_with("IQ") || (last.starts_with('Q') && last.len() > 1) {
         let c1 = last.chars().nth(1);
-        if last.starts_with("IQ") || c1.map_or(false, |c| c.is_ascii_digit()) {
+        if last.starts_with("IQ") || c1.is_some_and(|c| c.is_ascii_digit()) {
             return Some(last.to_string());
         }
     }

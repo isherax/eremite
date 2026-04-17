@@ -24,14 +24,8 @@ async fn setup() -> (MockServer, TempDir, ModelManager) {
 
 async fn mount_success(server: &MockServer) -> wiremock::MockGuard {
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/{}/resolve/main/{}",
-            REPO_ID, FILENAME
-        )))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_bytes(FAKE_MODEL_BYTES),
-        )
+        .and(path(format!("/{REPO_ID}/resolve/main/{FILENAME}")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(FAKE_MODEL_BYTES))
         .mount_as_scoped(server)
         .await
 }
@@ -142,10 +136,7 @@ async fn download_404_returns_error() {
     let (server, _tmp, mut manager) = setup().await;
 
     Mock::given(method("GET"))
-        .and(path(format!(
-            "/{}/resolve/main/{}",
-            REPO_ID, FILENAME
-        )))
+        .and(path(format!("/{REPO_ID}/resolve/main/{FILENAME}")))
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
@@ -156,5 +147,5 @@ async fn download_404_returns_error() {
 
     assert!(result.is_err());
     let err_msg = format!("{}", result.unwrap_err());
-    assert!(err_msg.contains("404"), "error should mention 404: {}", err_msg);
+    assert!(err_msg.contains("404"), "error should mention 404: {err_msg}");
 }

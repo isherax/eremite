@@ -5,19 +5,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// Wraps inference parameter defaults and an optional system prompt that is
 /// prepended to every new conversation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CoreConfig {
     pub inference_params: InferenceParams,
     pub system_prompt: Option<String>,
-}
-
-impl Default for CoreConfig {
-    fn default() -> Self {
-        Self {
-            inference_params: InferenceParams::default(),
-            system_prompt: None,
-        }
-    }
 }
 
 #[cfg(test)]

@@ -11,7 +11,6 @@ use eremite_models::ModelManager;
 use eremite_models::SearchResult;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
-use tokio::sync::mpsc;
 
 use crate::config::{AppConfig, ModelRef};
 
@@ -314,39 +313,35 @@ async fn send_message(
 
     let engine = Arc::clone(&state.engine);
     let shutdown = Arc::clone(&state.shutdown);
-    let (tx, mut rx) = mpsc::unbounded_channel::<InferenceEvent>();
+    let emitter = app.clone();
 
     let join_handle = tauri::async_runtime::spawn_blocking(move || {
         let mut engine = engine.lock().map_err(|e| format!("lock poisoned: {e}"))?;
 
         engine
-            .send_message(conv_id, &content, &mut |event| {
-                let _ = tx.send(event);
-            }, &shutdown)
+            .send_message(
+                conv_id,
+                &content,
+                &mut |event| match event {
+                    InferenceEvent::Token(t) => {
+                        let _ = emitter.emit("inference:token", t);
+                    }
+                    InferenceEvent::Done {
+                        tokens_generated,
+                        duration_ms,
+                    } => {
+                        let _ = emitter.emit(
+                            "inference:done",
+                            DonePayload {
+                                tokens_generated,
+                                duration_ms,
+                            },
+                        );
+                    }
+                },
+                &shutdown,
+            )
             .map_err(|e| format!("inference failed: {e}"))
-    });
-
-    let emitter = app.clone();
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                InferenceEvent::Token(t) => {
-                    let _ = emitter.emit("inference:token", t);
-                }
-                InferenceEvent::Done {
-                    tokens_generated,
-                    duration_ms,
-                } => {
-                    let _ = emitter.emit(
-                        "inference:done",
-                        DonePayload {
-                            tokens_generated,
-                            duration_ms,
-                        },
-                    );
-                }
-            }
-        }
     });
 
     join_handle
@@ -374,6 +369,8 @@ fn get_messages(state: State<'_, AppState>) -> Result<Vec<MessageView>, String> 
 // App setup
 // ---------------------------------------------------------------------------
 
+const FALLBACK_MODEL_DIR: &str = "/tmp/eremite-fallback";
+
 fn most_recent_download(manager: &ModelManager) -> Option<ModelRef> {
     manager
         .list()
@@ -385,137 +382,88 @@ fn most_recent_download(manager: &ModelManager) -> Option<ModelRef> {
         })
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    // 1. Read persisted state synchronously (fast, local file I/O)
+fn load_persisted_state() -> (AppConfig, PathBuf, ModelManager) {
     let config = AppConfig::load_default();
     let config_path = AppConfig::default_path().expect("could not determine config path");
-
     let model_manager = ModelManager::default_path()
-        .unwrap_or_else(|_| ModelManager::new(PathBuf::from("/tmp/eremite-fallback")).unwrap());
+        .unwrap_or_else(|_| ModelManager::new(PathBuf::from(FALLBACK_MODEL_DIR)).unwrap());
+    (config, config_path, model_manager)
+}
 
-    // 2. Determine which model to auto-load
-    let auto_target: Option<ModelRef> = config
+fn resolve_auto_target(config: &AppConfig, manager: &ModelManager) -> Option<ModelRef> {
+    config
         .last_used_model
         .clone()
-        .or_else(|| most_recent_download(&model_manager));
+        .or_else(|| most_recent_download(manager))
+}
 
-    // 3. Create the engine before Tauri boots
-    let engine = Arc::new(Mutex::new(CoreEngine::new(
-        LlamaInference::new(),
-        CoreConfig::default(),
-    )));
+struct EagerLoadContext {
+    engine: Arc<Mutex<CoreEngine<LlamaInference>>>,
+    startup_status: Arc<Mutex<Option<StartupStatus>>>,
+    loaded_model_ref: Arc<Mutex<Option<ModelRef>>>,
+    shutdown: Arc<AtomicBool>,
+}
 
-    let startup_status = Arc::new(Mutex::new(auto_target.as_ref().map(|target| {
-        StartupStatus::Loading {
-            repo_id: target.repo_id.clone(),
-            filename: target.filename.clone(),
+fn spawn_eager_load(
+    handle: AppHandle,
+    ctx: EagerLoadContext,
+    target: ModelRef,
+    path: PathBuf,
+) {
+    std::thread::spawn(move || {
+        let result = {
+            let mut eng = ctx.engine.lock().unwrap();
+            eng.load_model(&path)
+        };
+
+        if ctx.shutdown.load(Ordering::Relaxed) {
+            return;
         }
-    })));
 
-    let loaded_model_ref: Arc<Mutex<Option<ModelRef>>> = Arc::new(Mutex::new(None));
-    let shutdown = Arc::new(AtomicBool::new(false));
+        match result {
+            Ok(metadata) => {
+                let model_info = ModelInfo::from(metadata);
 
-    // Prepare eager-load data (resolve path before Tauri starts)
-    let eager_load = auto_target.as_ref().map(|target| {
-        let path = model_manager.model_path(&target.repo_id, &target.filename);
-        (target.clone(), path)
-    });
+                *ctx.loaded_model_ref.lock().unwrap() = Some(target.clone());
+                *ctx.startup_status.lock().unwrap() = Some(StartupStatus::Ready {
+                    model_info: model_info.clone(),
+                    repo_id: target.repo_id.clone(),
+                    filename: target.filename.clone(),
+                });
 
-    let app_state = AppState {
-        engine: Arc::clone(&engine),
-        active_conversation: Arc::new(Mutex::new(None)),
-        model_manager: Arc::new(tokio::sync::Mutex::new(model_manager)),
-        config: Arc::new(Mutex::new(config)),
-        config_path,
-        startup_status: Arc::clone(&startup_status),
-        loaded_model_ref: Arc::clone(&loaded_model_ref),
-        shutdown: Arc::clone(&shutdown),
-    };
-
-    // 4. Build the Tauri app; spawn the eager load inside setup() for AppHandle access
-    let shutdown_for_setup = Arc::clone(&shutdown);
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .manage(app_state)
-        .setup(move |app| {
-            if let Some((target, path)) = eager_load {
-                let engine_clone = Arc::clone(&engine);
-                let status_clone = Arc::clone(&startup_status);
-                let model_ref_clone = Arc::clone(&loaded_model_ref);
-                let shutdown_clone = Arc::clone(&shutdown_for_setup);
-                let handle = app.handle().clone();
-
-                std::thread::spawn(move || {
-                    let result = {
-                        let mut eng = engine_clone.lock().unwrap();
-                        eng.load_model(&path)
-                    };
-
-                    if shutdown_clone.load(Ordering::Relaxed) {
-                        return;
+                {
+                    let mut eng = ctx.engine.lock().unwrap();
+                    eng.create_conversation(None);
+                }
+                if let Some(state) = handle.try_state::<AppState>() {
+                    if let Ok(mut conv) = state.active_conversation.lock() {
+                        let eng = ctx.engine.lock().unwrap();
+                        *conv = eng.active_conversation();
                     }
+                }
 
-                    match result {
-                        Ok(metadata) => {
-                            let model_info = ModelInfo::from(metadata);
-
-                            *model_ref_clone.lock().unwrap() = Some(target.clone());
-                            *status_clone.lock().unwrap() = Some(StartupStatus::Ready {
-                                model_info: model_info.clone(),
-                                repo_id: target.repo_id.clone(),
-                                filename: target.filename.clone(),
-                            });
-
-                            {
-                                let mut eng = engine_clone.lock().unwrap();
-                                eng.create_conversation(None);
-                            }
-                            if let Some(state) = handle.try_state::<AppState>() {
-                                if let Ok(mut conv) = state.active_conversation.lock() {
-                                    let eng = engine_clone.lock().unwrap();
-                                    *conv = eng.active_conversation();
-                                }
-                            }
-
-                            let _ = handle.emit(
-                                "model:ready",
-                                ModelReady {
-                                    model_info,
-                                    repo_id: target.repo_id,
-                                    filename: target.filename,
-                                },
-                            );
-                        }
-                        Err(e) => {
-                            *status_clone.lock().unwrap() = Some(StartupStatus::Failed {
-                                error: format!("{e}"),
-                            });
-                        }
-                    }
+                let _ = handle.emit(
+                    "model:ready",
+                    ModelReady {
+                        model_info,
+                        repo_id: target.repo_id,
+                        filename: target.filename,
+                    },
+                );
+            }
+            Err(e) => {
+                *ctx.startup_status.lock().unwrap() = Some(StartupStatus::Failed {
+                    error: format!("{e}"),
                 });
             }
+        }
+    });
+}
 
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            get_startup_state,
-            list_models,
-            search_models,
-            popular_models,
-            download_model,
-            delete_model,
-            select_model,
-            send_message,
-            get_messages,
-        ])
-        .build(tauri::generate_context!())
-        .expect("error while building tauri application");
-
-    let shutdown_for_exit = Arc::clone(&shutdown);
+fn install_exit_handler(app: tauri::App, shutdown: Arc<AtomicBool>) {
     app.run(move |app_handle, event| {
         if let RunEvent::ExitRequested { api, .. } = &event {
-            shutdown_for_exit.store(true, Ordering::Relaxed);
+            shutdown.store(true, Ordering::Relaxed);
             api.prevent_exit();
 
             let engine = {
@@ -535,4 +483,73 @@ pub fn run() {
             });
         }
     });
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let (config, config_path, model_manager) = load_persisted_state();
+    let auto_target = resolve_auto_target(&config, &model_manager);
+
+    let engine = Arc::new(Mutex::new(CoreEngine::new(
+        LlamaInference::new(),
+        CoreConfig::default(),
+    )));
+
+    let startup_status = Arc::new(Mutex::new(auto_target.as_ref().map(|target| {
+        StartupStatus::Loading {
+            repo_id: target.repo_id.clone(),
+            filename: target.filename.clone(),
+        }
+    })));
+    let loaded_model_ref: Arc<Mutex<Option<ModelRef>>> = Arc::new(Mutex::new(None));
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    // Resolve eager-load path before the manager is moved into AppState.
+    let eager_load = auto_target.as_ref().map(|target| {
+        let path = model_manager.model_path(&target.repo_id, &target.filename);
+        (target.clone(), path)
+    });
+
+    let app_state = AppState {
+        engine: Arc::clone(&engine),
+        active_conversation: Arc::new(Mutex::new(None)),
+        model_manager: Arc::new(tokio::sync::Mutex::new(model_manager)),
+        config: Arc::new(Mutex::new(config)),
+        config_path,
+        startup_status: Arc::clone(&startup_status),
+        loaded_model_ref: Arc::clone(&loaded_model_ref),
+        shutdown: Arc::clone(&shutdown),
+    };
+
+    let eager_ctx = EagerLoadContext {
+        engine: Arc::clone(&engine),
+        startup_status: Arc::clone(&startup_status),
+        loaded_model_ref: Arc::clone(&loaded_model_ref),
+        shutdown: Arc::clone(&shutdown),
+    };
+
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .manage(app_state)
+        .setup(move |app| {
+            if let Some((target, path)) = eager_load {
+                spawn_eager_load(app.handle().clone(), eager_ctx, target, path);
+            }
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_startup_state,
+            list_models,
+            search_models,
+            popular_models,
+            download_model,
+            delete_model,
+            select_model,
+            send_message,
+            get_messages,
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    install_exit_handler(app, shutdown);
 }

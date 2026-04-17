@@ -44,24 +44,8 @@ impl ModelManager {
         filename: &str,
         base_url: Option<&str>,
     ) -> Result<ModelEntry> {
-        let base_url = base_url.unwrap_or_else(|| default_base_url());
-        let url = build_download_url(base_url, repo_id, filename);
-        let dest = self.model_path(repo_id, filename);
-
-        let result = download_file(&url, &dest, |_, _| {}).await?;
-
-        let entry = ModelEntry {
-            repo_id: repo_id.to_string(),
-            filename: filename.to_string(),
-            size_bytes: result.size_bytes,
-            sha256: result.sha256,
-            downloaded_at: Utc::now(),
-        };
-
-        self.manifest.add(entry.clone());
-        self.manifest.save(&self.manifest_path())?;
-
-        Ok(entry)
+        self.download_with_progress(repo_id, filename, base_url, |_, _| {})
+            .await
     }
 
     /// Download with a progress callback.
@@ -112,7 +96,7 @@ impl ModelManager {
         }
 
         if !self.manifest.remove_entry(repo_id, filename) {
-            bail!("model {}/{} not found in manifest", repo_id, filename);
+            bail!("model {repo_id}/{filename} not found in manifest");
         }
 
         self.manifest.save(&self.manifest_path())?;
@@ -121,13 +105,7 @@ impl ModelManager {
 
     /// Return the on-disk path where a model file lives (or would live).
     pub fn model_path(&self, repo_id: &str, filename: &str) -> PathBuf {
-        self.models_dir().join(repo_id).join(filename)
-    }
-
-    fn models_dir(&self) -> &Path {
-        // models/ is directly under base_path
-        // We return base_path/models but as a PathBuf since we join onto it
-        &self.base_path
+        self.base_path.join(repo_id).join(filename)
     }
 
     fn manifest_path(&self) -> PathBuf {
