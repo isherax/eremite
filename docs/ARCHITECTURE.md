@@ -56,7 +56,7 @@ Tauri commands exposed to the frontend:
 
 | Command | Purpose |
 |---|---|
-| `get_startup_state` | Returns startup routing info: whether a model is auto-loading, ready, or no models exist |
+| `get_startup_state` | Returns startup routing info when a model is auto-loading, ready, or failed; returns `null` when nothing is auto-loading |
 | `list_models` | Lists all downloaded models from the manifest |
 | `search_models` | Queries the public Hugging Face Hub `/api/models` API for GGUF text-generation repos matching a search string |
 | `popular_models` | Fetches top GGUF text-generation repos by download count (same Hub API, no search query) |
@@ -93,10 +93,11 @@ The frontend has two views:
 1. `run()` reads `~/.eremite/config.json` and the model manifest synchronously.
 2. If models exist, determines which to auto-load: `config.last_used_model` if set, otherwise the most recently downloaded model.
 3. Creates the `CoreEngine` and spawns a `std::thread` to begin loading the model. This happens before `tauri::Builder` is constructed, running in parallel with Tauri runtime init, webview creation, and React hydration.
-4. The frontend calls `get_startup_state` on mount and routes accordingly:
+4. The frontend defaults to the Model Library tab and calls `get_startup_state` on mount. If a model is auto-loading it routes accordingly:
    - `"ready"`: model already loaded (beat the frontend) -- go straight to Chat.
    - `"loading"`: model still loading -- show Chat with a loading indicator, listen for `model:ready`.
-   - `"no_models"` / `"failed"`: show Model Library.
+   - `"failed"`: stay on the Model Library; the last auto-load attempt failed.
+   - `null` (no auto-load): stay on the Model Library -- nothing to route to.
 
 ### Model Download
 

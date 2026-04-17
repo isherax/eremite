@@ -16,7 +16,7 @@ interface ModelRef {
 }
 
 interface StartupState {
-  status: "no_models" | "loading" | "ready" | "failed";
+  status: "loading" | "ready" | "failed";
   model_info?: ModelInfo;
   loading_model?: ModelRef;
   error?: string;
@@ -28,7 +28,7 @@ interface ModelReady {
   filename: string;
 }
 
-type View = "init" | "models" | "chat";
+type View = "models" | "chat";
 
 function formatParams(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
@@ -37,25 +37,23 @@ function formatParams(n: number): string {
 }
 
 export default function App() {
-  const [view, setView] = useState<View>("init");
+  const [view, setView] = useState<View>("models");
   const [model, setModel] = useState<ModelInfo | null>(null);
   const [loadingModel, setLoadingModel] = useState<ModelRef | null>(null);
   const [loadedModelRef, setLoadedModelRef] = useState<ModelRef | null>(null);
 
   useEffect(() => {
     const init = async () => {
-      const state = await invoke<StartupState>("get_startup_state");
+      const state = await invoke<StartupState | null>("get_startup_state");
 
-      if (state.status === "ready" && state.model_info) {
+      if (state?.status === "ready" && state.model_info) {
         setModel(state.model_info);
         setLoadedModelRef(state.loading_model ?? null);
         setView("chat");
-      } else if (state.status === "loading" && state.loading_model) {
+      } else if (state?.status === "loading" && state.loading_model) {
         setLoadingModel(state.loading_model);
         setLoadedModelRef(null);
         setView("chat");
-      } else {
-        setView("models");
       }
     };
 
@@ -91,16 +89,6 @@ export default function App() {
   const chatHeaderTitle =
     model?.description ?? (loadingModel ? loadingName : "Eremite");
   const canOpenChat = model !== null || loadingModel !== null;
-
-  if (view === "init") {
-    return (
-      <div className="app">
-        <div className="loading-screen">
-          <p>Starting up...</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="app">

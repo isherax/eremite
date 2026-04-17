@@ -108,7 +108,6 @@ struct StartupStateResponse {
 // ---------------------------------------------------------------------------
 
 enum StartupStatus {
-    NoModels,
     Loading {
         repo_id: String,
         filename: String,
@@ -133,7 +132,7 @@ struct AppState {
     model_manager: Arc<tokio::sync::Mutex<ModelManager>>,
     config: Arc<Mutex<AppConfig>>,
     config_path: PathBuf,
-    startup_status: Arc<Mutex<StartupStatus>>,
+    startup_status: Arc<Mutex<Option<StartupStatus>>>,
     loaded_model_ref: Arc<Mutex<Option<ModelRef>>>,
     shutdown: Arc<AtomicBool>,
 }
@@ -143,16 +142,13 @@ struct AppState {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-fn get_startup_state(state: State<'_, AppState>) -> Result<StartupStateResponse, String> {
+fn get_startup_state(
+    state: State<'_, AppState>,
+) -> Result<Option<StartupStateResponse>, String> {
     let status = state.startup_status.lock().map_err(|e| e.to_string())?;
     match &*status {
-        StartupStatus::NoModels => Ok(StartupStateResponse {
-            status: "no_models".to_string(),
-            model_info: None,
-            loading_model: None,
-            error: None,
-        }),
-        StartupStatus::Loading { repo_id, filename } => Ok(StartupStateResponse {
+        None => Ok(None),
+        Some(StartupStatus::Loading { repo_id, filename }) => Ok(Some(StartupStateResponse {
             status: "loading".to_string(),
             model_info: None,
             loading_model: Some(ModelRef {
@@ -160,12 +156,12 @@ fn get_startup_state(state: State<'_, AppState>) -> Result<StartupStateResponse,
                 filename: filename.clone(),
             }),
             error: None,
-        }),
-        StartupStatus::Ready {
+        })),
+        Some(StartupStatus::Ready {
             model_info,
             repo_id,
             filename,
-        } => Ok(StartupStateResponse {
+        }) => Ok(Some(StartupStateResponse {
             status: "ready".to_string(),
             model_info: Some(model_info.clone()),
             loading_model: Some(ModelRef {
@@ -173,13 +169,13 @@ fn get_startup_state(state: State<'_, AppState>) -> Result<StartupStateResponse,
                 filename: filename.clone(),
             }),
             error: None,
-        }),
-        StartupStatus::Failed { error } => Ok(StartupStateResponse {
+        })),
+        Some(StartupStatus::Failed { error }) => Ok(Some(StartupStateResponse {
             status: "failed".to_string(),
             model_info: None,
             loading_model: None,
             error: Some(error.clone()),
-        }),
+        })),
     }
 }
 
@@ -404,24 +400,18 @@ pub fn run() {
         .clone()
         .or_else(|| most_recent_download(&model_manager));
 
-    let has_models = !model_manager.list().is_empty();
-
     // 3. Create the engine before Tauri boots
     let engine = Arc::new(Mutex::new(CoreEngine::new(
         LlamaInference::new(),
         CoreConfig::default(),
     )));
 
-    let startup_status = if !has_models {
-        Arc::new(Mutex::new(StartupStatus::NoModels))
-    } else if let Some(ref target) = auto_target {
-        Arc::new(Mutex::new(StartupStatus::Loading {
+    let startup_status = Arc::new(Mutex::new(auto_target.as_ref().map(|target| {
+        StartupStatus::Loading {
             repo_id: target.repo_id.clone(),
             filename: target.filename.clone(),
-        }))
-    } else {
-        Arc::new(Mutex::new(StartupStatus::NoModels))
-    };
+        }
+    })));
 
     let loaded_model_ref: Arc<Mutex<Option<ModelRef>>> = Arc::new(Mutex::new(None));
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -471,11 +461,11 @@ pub fn run() {
                             let model_info = ModelInfo::from(metadata);
 
                             *model_ref_clone.lock().unwrap() = Some(target.clone());
-                            *status_clone.lock().unwrap() = StartupStatus::Ready {
+                            *status_clone.lock().unwrap() = Some(StartupStatus::Ready {
                                 model_info: model_info.clone(),
                                 repo_id: target.repo_id.clone(),
                                 filename: target.filename.clone(),
-                            };
+                            });
 
                             {
                                 let mut eng = engine_clone.lock().unwrap();
@@ -498,9 +488,9 @@ pub fn run() {
                             );
                         }
                         Err(e) => {
-                            *status_clone.lock().unwrap() = StartupStatus::Failed {
+                            *status_clone.lock().unwrap() = Some(StartupStatus::Failed {
                                 error: format!("{e}"),
-                            };
+                            });
                         }
                     }
                 });
