@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 
-use crate::download::{build_download_url, default_base_url, download_file};
+use crate::download::{build_download_url, download_file};
 use crate::manifest::{Manifest, ModelEntry};
 
 pub struct ModelManager {
@@ -57,7 +57,7 @@ impl ModelManager {
         base_url: Option<&str>,
         on_progress: impl Fn(u64, Option<u64>),
     ) -> Result<ModelEntry> {
-        let base_url = base_url.unwrap_or_else(|| default_base_url());
+        let base_url = base_url.unwrap_or_else(|| default_hub_origin());
         let url = build_download_url(base_url, repo_id, filename);
         let dest = self.model_path(repo_id, filename);
 

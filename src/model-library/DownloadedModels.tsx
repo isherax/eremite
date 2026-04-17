@@ -1,5 +1,5 @@
 import type { ModelEntry, ModelRef } from "../types/model";
-import { formatBytes, formatDate } from "../utils/format";
+import { formatBytes, formatDate, modelKey } from "../utils/format";
 
 interface DownloadedModelsProps {
   models: ModelEntry[];
@@ -30,7 +30,7 @@ export default function DownloadedModels({
       ) : (
         <div className="models-list">
           {models.map((entry) => {
-            const key = `${entry.repo_id}/${entry.filename}`;
+            const key = modelKey(entry);
             const isLoaded =
               loadedModelRef?.repo_id === entry.repo_id &&
               loadedModelRef?.filename === entry.filename;

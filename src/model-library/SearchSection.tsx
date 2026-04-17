@@ -1,5 +1,5 @@
 import type { HubSearchResult } from "../types/model";
-import HubCard from "./HubCard";
+import HubList from "./HubList";
 
 interface SearchSectionProps {
   query: string;
@@ -64,22 +64,15 @@ export default function SearchSection({
       )}
 
       {results.length > 0 && (
-        <div className="hub-results search-results">
-          {results.map((r) => {
-            const cardKey = `search:${r.repo_id}`;
-            return (
-              <HubCard
-                key={cardKey}
-                result={r}
-                expanded={expandedKey === cardKey}
-                onToggle={() => onToggleExpand(r.repo_id)}
-                onDownload={(fname) => onDownload(r.repo_id, fname)}
-                disabled={downloading}
-                bodyId={`hub-body-${cardKey}`}
-              />
-            );
-          })}
-        </div>
+        <HubList
+          section="search"
+          results={results}
+          expandedKey={expandedKey}
+          onToggleExpand={onToggleExpand}
+          onDownload={onDownload}
+          downloading={downloading}
+          className="search-results"
+        />
       )}
     </section>
   );

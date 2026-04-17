@@ -2,9 +2,9 @@ mod config;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use eremite_core::{CoreConfig, CoreEngine, ConversationId, LlamaInference, Message};
+use eremite_core::{CoreConfig, CoreEngine, LlamaInference, Message};
 use eremite_inference::{InferenceEvent, ModelMetadata};
 use eremite_models::manifest::ModelEntry;
 use eremite_models::ModelManager;
@@ -99,6 +99,7 @@ struct StartupStateResponse {
     status: String,
     model_info: Option<ModelInfo>,
     loading_model: Option<ModelRef>,
+    loaded_model: Option<ModelRef>,
     error: Option<String>,
 }
 
@@ -127,13 +128,19 @@ enum StartupStatus {
 
 struct AppState {
     engine: Arc<Mutex<CoreEngine<LlamaInference>>>,
-    active_conversation: Arc<Mutex<Option<ConversationId>>>,
     model_manager: Arc<tokio::sync::Mutex<ModelManager>>,
     config: Arc<Mutex<AppConfig>>,
     config_path: PathBuf,
     startup_status: Arc<Mutex<Option<StartupStatus>>>,
-    loaded_model_ref: Arc<Mutex<Option<ModelRef>>>,
     shutdown: Arc<AtomicBool>,
+}
+
+/// Locks a mutex, recovering from poisoning by taking the inner guard.
+/// A poisoned engine/status mutex still has valid data for our purposes:
+/// the worst case is a panicked inference thread, and we'd rather keep
+/// the UI responsive than propagate the panic further.
+fn lock_tolerant<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 // ---------------------------------------------------------------------------
@@ -145,37 +152,40 @@ fn get_startup_state(
     state: State<'_, AppState>,
 ) -> Result<Option<StartupStateResponse>, String> {
     let status = state.startup_status.lock().map_err(|e| e.to_string())?;
-    match &*status {
-        None => Ok(None),
-        Some(StartupStatus::Loading { repo_id, filename }) => Ok(Some(StartupStateResponse {
+    Ok(match &*status {
+        None => None,
+        Some(StartupStatus::Loading { repo_id, filename }) => Some(StartupStateResponse {
             status: "loading".to_string(),
             model_info: None,
             loading_model: Some(ModelRef {
                 repo_id: repo_id.clone(),
                 filename: filename.clone(),
             }),
+            loaded_model: None,
             error: None,
-        })),
+        }),
         Some(StartupStatus::Ready {
             model_info,
             repo_id,
             filename,
-        }) => Ok(Some(StartupStateResponse {
+        }) => Some(StartupStateResponse {
             status: "ready".to_string(),
             model_info: Some(model_info.clone()),
-            loading_model: Some(ModelRef {
+            loading_model: None,
+            loaded_model: Some(ModelRef {
                 repo_id: repo_id.clone(),
                 filename: filename.clone(),
             }),
             error: None,
-        })),
-        Some(StartupStatus::Failed { error }) => Ok(Some(StartupStateResponse {
+        }),
+        Some(StartupStatus::Failed { error }) => Some(StartupStateResponse {
             status: "failed".to_string(),
             model_info: None,
             loading_model: None,
+            loaded_model: None,
             error: Some(error.clone()),
-        })),
-    }
+        }),
+    })
 }
 
 #[tauri::command]
@@ -264,29 +274,21 @@ async fn select_model(
     }
 
     let engine_clone = Arc::clone(&state.engine);
+    let path_for_task = path.clone();
     let metadata = tauri::async_runtime::spawn_blocking(move || {
-        let mut engine = engine_clone.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-        engine
-            .load_model(&path)
-            .map_err(|e| format!("failed to load model: {e}"))
+        let mut engine = engine_clone
+            .lock()
+            .map_err(|e| format!("lock poisoned: {e}"))?;
+        let metadata = engine
+            .load_model(&path_for_task)
+            .map_err(|e| format!("failed to load model: {e}"))?;
+        engine.create_conversation(None);
+        Ok::<ModelMetadata, String>(metadata)
     })
     .await
     .map_err(|e| format!("task panicked: {e}"))??;
 
-    let conv_id = {
-        let mut engine = state.engine.lock().map_err(|e| e.to_string())?;
-        engine.create_conversation(None)
-    };
-    *state
-        .active_conversation
-        .lock()
-        .map_err(|e| e.to_string())? = Some(conv_id);
-
-    let model_ref = ModelRef {
-        repo_id,
-        filename,
-    };
-    *state.loaded_model_ref.lock().map_err(|e| e.to_string())? = Some(model_ref.clone());
+    let model_ref = ModelRef { repo_id, filename };
 
     {
         let mut config = state.config.lock().map_err(|e| e.to_string())?;
@@ -305,18 +307,15 @@ async fn send_message(
     state: State<'_, AppState>,
     content: String,
 ) -> Result<String, String> {
-    let conv_id = state
-        .active_conversation
-        .lock()
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "no active conversation".to_string())?;
-
     let engine = Arc::clone(&state.engine);
     let shutdown = Arc::clone(&state.shutdown);
     let emitter = app.clone();
 
     let join_handle = tauri::async_runtime::spawn_blocking(move || {
         let mut engine = engine.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+        let conv_id = engine
+            .active_conversation()
+            .ok_or_else(|| "no active conversation".to_string())?;
 
         engine
             .send_message(
@@ -351,13 +350,10 @@ async fn send_message(
 
 #[tauri::command]
 fn get_messages(state: State<'_, AppState>) -> Result<Vec<MessageView>, String> {
-    let conv_id = state
-        .active_conversation
-        .lock()
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "no active conversation".to_string())?;
-
     let engine = state.engine.lock().map_err(|e| e.to_string())?;
+    let conv_id = engine
+        .active_conversation()
+        .ok_or_else(|| "no active conversation".to_string())?;
     let conv = engine
         .conversation(conv_id)
         .ok_or_else(|| "conversation not found".to_string())?;
@@ -400,7 +396,6 @@ fn resolve_auto_target(config: &AppConfig, manager: &ModelManager) -> Option<Mod
 struct EagerLoadContext {
     engine: Arc<Mutex<CoreEngine<LlamaInference>>>,
     startup_status: Arc<Mutex<Option<StartupStatus>>>,
-    loaded_model_ref: Arc<Mutex<Option<ModelRef>>>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -412,8 +407,10 @@ fn spawn_eager_load(
 ) {
     std::thread::spawn(move || {
         let result = {
-            let mut eng = ctx.engine.lock().unwrap();
-            eng.load_model(&path)
+            let mut eng = lock_tolerant(&ctx.engine);
+            eng.load_model(&path).inspect(|_| {
+                eng.create_conversation(None);
+            })
         };
 
         if ctx.shutdown.load(Ordering::Relaxed) {
@@ -424,23 +421,11 @@ fn spawn_eager_load(
             Ok(metadata) => {
                 let model_info = ModelInfo::from(metadata);
 
-                *ctx.loaded_model_ref.lock().unwrap() = Some(target.clone());
-                *ctx.startup_status.lock().unwrap() = Some(StartupStatus::Ready {
+                *lock_tolerant(&ctx.startup_status) = Some(StartupStatus::Ready {
                     model_info: model_info.clone(),
                     repo_id: target.repo_id.clone(),
                     filename: target.filename.clone(),
                 });
-
-                {
-                    let mut eng = ctx.engine.lock().unwrap();
-                    eng.create_conversation(None);
-                }
-                if let Some(state) = handle.try_state::<AppState>() {
-                    if let Ok(mut conv) = state.active_conversation.lock() {
-                        let eng = ctx.engine.lock().unwrap();
-                        *conv = eng.active_conversation();
-                    }
-                }
 
                 let _ = handle.emit(
                     "model:ready",
@@ -452,7 +437,7 @@ fn spawn_eager_load(
                 );
             }
             Err(e) => {
-                *ctx.startup_status.lock().unwrap() = Some(StartupStatus::Failed {
+                *lock_tolerant(&ctx.startup_status) = Some(StartupStatus::Failed {
                     error: format!("{e}"),
                 });
             }
@@ -475,10 +460,9 @@ fn install_exit_handler(app: tauri::App, shutdown: Arc<AtomicBool>) {
             std::thread::spawn(move || {
                 // Acquiring the lock waits for any in-flight inference to
                 // finish (it will see the shutdown flag and bail early).
-                // Once we hold the lock, no new work can start. Dropping
-                // the guard lets Tauri tear down the engine via normal RAII.
-                let _guard = engine.lock().unwrap_or_else(|e| e.into_inner());
-                drop(_guard);
+                // Once we hold the lock, no new work can start; the guard
+                // is released at the end of this scope as Tauri tears down.
+                let _guard = lock_tolerant(&engine);
                 handle.exit(0);
             });
         }
@@ -501,7 +485,6 @@ pub fn run() {
             filename: target.filename.clone(),
         }
     })));
-    let loaded_model_ref: Arc<Mutex<Option<ModelRef>>> = Arc::new(Mutex::new(None));
     let shutdown = Arc::new(AtomicBool::new(false));
 
     // Resolve eager-load path before the manager is moved into AppState.
@@ -512,19 +495,16 @@ pub fn run() {
 
     let app_state = AppState {
         engine: Arc::clone(&engine),
-        active_conversation: Arc::new(Mutex::new(None)),
         model_manager: Arc::new(tokio::sync::Mutex::new(model_manager)),
         config: Arc::new(Mutex::new(config)),
         config_path,
         startup_status: Arc::clone(&startup_status),
-        loaded_model_ref: Arc::clone(&loaded_model_ref),
         shutdown: Arc::clone(&shutdown),
     };
 
     let eager_ctx = EagerLoadContext {
         engine: Arc::clone(&engine),
         startup_status: Arc::clone(&startup_status),
-        loaded_model_ref: Arc::clone(&loaded_model_ref),
         shutdown: Arc::clone(&shutdown),
     };
 

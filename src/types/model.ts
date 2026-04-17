@@ -13,7 +13,6 @@ export interface ModelEntry {
   repo_id: string;
   filename: string;
   size_bytes: number;
-  sha256: string;
   downloaded_at: string;
 }
 
@@ -35,7 +34,6 @@ export interface HubSearchResult {
   author?: string | null;
   downloads: number;
   likes: number;
-  tags: string[];
   gguf_files: GgufFileInfo[];
 }
 
@@ -49,5 +47,6 @@ export interface StartupState {
   status: "loading" | "ready" | "failed";
   model_info?: ModelInfo;
   loading_model?: ModelRef;
+  loaded_model?: ModelRef;
   error?: string;
 }

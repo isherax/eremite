@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use eremite_inference::{ChatMessage, InferenceEngine, InferenceEvent, InferenceParams, ModelMetadata};
 
 /// Abstracts the inference boundary so `CoreEngine` can be tested with a mock
@@ -31,15 +31,15 @@ pub trait InferenceProvider {
 /// Production implementation that wraps `eremite_inference::InferenceEngine`.
 pub struct LlamaInference {
     engine: Option<InferenceEngine>,
-    metadata: Option<ModelMetadata>,
 }
 
 impl LlamaInference {
     pub fn new() -> Self {
-        Self {
-            engine: None,
-            metadata: None,
-        }
+        Self { engine: None }
+    }
+
+    fn engine_mut(&mut self) -> Result<&mut InferenceEngine> {
+        self.engine.as_mut().ok_or_else(|| anyhow!("no model loaded"))
     }
 }
 
@@ -55,11 +55,9 @@ impl InferenceProvider for LlamaInference {
         // backend is a global singleton; it must be fully torn down before
         // re-initialization.
         self.engine = None;
-        self.metadata = None;
 
         let engine = InferenceEngine::load(path, params)?;
-        let metadata = engine.model_metadata();
-        self.metadata = Some(metadata.clone());
+        let metadata = engine.model_metadata().clone();
         self.engine = Some(engine);
         Ok(metadata)
     }
@@ -71,11 +69,8 @@ impl InferenceProvider for LlamaInference {
         on_event: &mut dyn FnMut(InferenceEvent),
         shutdown: &AtomicBool,
     ) -> Result<String> {
-        let engine = self
-            .engine
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("no model loaded"))?;
-        engine.generate_chat(messages, params, on_event, shutdown)
+        self.engine_mut()?
+            .generate_chat(messages, params, on_event, shutdown)
     }
 
     fn generate(
@@ -85,14 +80,11 @@ impl InferenceProvider for LlamaInference {
         on_event: &mut dyn FnMut(InferenceEvent),
         shutdown: &AtomicBool,
     ) -> Result<String> {
-        let engine = self
-            .engine
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("no model loaded"))?;
-        engine.generate(prompt, params, on_event, shutdown)
+        self.engine_mut()?
+            .generate(prompt, params, on_event, shutdown)
     }
 
     fn model_metadata(&self) -> Option<&ModelMetadata> {
-        self.metadata.as_ref()
+        self.engine.as_ref().map(InferenceEngine::model_metadata)
     }
 }

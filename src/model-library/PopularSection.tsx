@@ -1,5 +1,5 @@
 import type { HubSearchResult } from "../types/model";
-import HubCard from "./HubCard";
+import HubList from "./HubList";
 
 interface PopularSectionProps {
   popular: HubSearchResult[] | null;
@@ -36,22 +36,14 @@ export default function PopularSection({
         </div>
       )}
       {popular && popular.length > 0 && (
-        <div className="hub-results">
-          {popular.map((r) => {
-            const cardKey = `popular:${r.repo_id}`;
-            return (
-              <HubCard
-                key={cardKey}
-                result={r}
-                expanded={expandedKey === cardKey}
-                onToggle={() => onToggleExpand(r.repo_id)}
-                onDownload={(fname) => onDownload(r.repo_id, fname)}
-                disabled={downloading}
-                bodyId={`hub-body-${cardKey}`}
-              />
-            );
-          })}
-        </div>
+        <HubList
+          section="popular"
+          results={popular}
+          expandedKey={expandedKey}
+          onToggleExpand={onToggleExpand}
+          onDownload={onDownload}
+          downloading={downloading}
+        />
       )}
       {popular && popular.length === 0 && !loading && (
         <p className="section-hint">No popular models returned.</p>

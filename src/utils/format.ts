@@ -30,3 +30,8 @@ export function formatParams(n: number): string {
 export function formatLoadingModelName(ref: ModelRef | null): string {
   return ref?.filename ?? ref?.repo_id ?? "model";
 }
+
+/** Stable identity string for a model by repo_id + filename. */
+export function modelKey(ref: { repo_id: string; filename: string }): string {
+  return `${ref.repo_id}/${ref.filename}`;
+}

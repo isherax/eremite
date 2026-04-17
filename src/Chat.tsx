@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import MarkdownContent from "./MarkdownContent";
 import type { ModelInfo, ModelRef } from "./types/model";
 import { formatLoadingModelName } from "./utils/format";
+import { useInferenceStream } from "./hooks/useInferenceStream";
 
 interface ChatMessage {
   id: number;
@@ -22,16 +23,18 @@ export default function Chat({ model, loadingModel }: ChatProps) {
   const [status, setStatus] = useState<ChatStatus>(model ? "ready" : "loading");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const streamBufferRef = useRef("");
-  const rafRef = useRef(0);
   const nextMessageIdRef = useRef(1);
+
+  const isGenerating = status === "generating";
+  const streamingContent = useInferenceStream(isGenerating);
 
   useEffect(() => {
     if (model) {
       setStatus("ready");
+      setMessages([]);
+      nextMessageIdRef.current = 1;
     }
   }, [model]);
 
@@ -56,36 +59,13 @@ export default function Chat({ model, loadingModel }: ChatProps) {
     setInput("");
     if (inputRef.current) inputRef.current.style.height = "auto";
     setStatus("generating");
-    setStreamingContent("");
-
-    const unlisteners: UnlistenFn[] = [];
 
     try {
-      const unlistenToken = await listen<string>(
-        "inference:token",
-        (event) => {
-          streamBufferRef.current += event.payload;
-          if (!rafRef.current) {
-            rafRef.current = requestAnimationFrame(() => {
-              setStreamingContent(streamBufferRef.current);
-              rafRef.current = 0;
-            });
-          }
-        },
-      );
-      unlisteners.push(unlistenToken);
-
       const fullResponse = await invoke<string>("send_message", { content });
-
       appendMessage("assistant", fullResponse);
     } catch (err) {
       appendMessage("assistant", `Error: ${err}`);
     } finally {
-      unlisteners.forEach((unlisten) => unlisten());
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      streamBufferRef.current = "";
-      rafRef.current = 0;
-      setStreamingContent("");
       setStatus("ready");
       inputRef.current?.focus();
     }
@@ -98,7 +78,7 @@ export default function Chat({ model, loadingModel }: ChatProps) {
     ta.style.height = `${ta.scrollHeight}px`;
   }, []);
 
-  function handleKeyDown(e: React.KeyboardEvent) {
+  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -106,7 +86,6 @@ export default function Chat({ model, loadingModel }: ChatProps) {
   }
 
   const loadingName = formatLoadingModelName(loadingModel);
-  const isGenerating = status === "generating";
 
   return (
     <>

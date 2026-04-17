@@ -26,7 +26,7 @@ export default function App() {
 
       if (state?.status === "ready" && state.model_info) {
         setModel(state.model_info);
-        setLoadedModelRef(state.loading_model ?? null);
+        setLoadedModelRef(state.loaded_model ?? null);
         setView("chat");
       } else if (state?.status === "loading" && state.loading_model) {
         setLoadingModel(state.loading_model);

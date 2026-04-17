@@ -4,6 +4,17 @@ import type { HubSearchResult } from "../types/model";
 
 const POPULAR_CACHE_KEY = "eremite_popular_models_v1";
 
+function isHubSearchResultArray(value: unknown): value is HubSearchResult[] {
+  if (!Array.isArray(value)) return false;
+  return value.every(
+    (item) =>
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as { repo_id?: unknown }).repo_id === "string" &&
+      Array.isArray((item as { gguf_files?: unknown }).gguf_files),
+  );
+}
+
 interface PopularModelsState {
   popular: HubSearchResult[] | null;
   loading: boolean;
@@ -19,9 +30,9 @@ export function usePopularModels(): PopularModelsState {
     const raw = sessionStorage.getItem(POPULAR_CACHE_KEY);
     if (raw) {
       try {
-        const parsed = JSON.parse(raw) as unknown;
-        if (Array.isArray(parsed)) {
-          setPopular(parsed as HubSearchResult[]);
+        const parsed: unknown = JSON.parse(raw);
+        if (isHubSearchResultArray(parsed)) {
+          setPopular(parsed);
           return;
         }
       } catch {

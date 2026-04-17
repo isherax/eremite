@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   HubSearchResult,
@@ -6,7 +6,7 @@ import type {
   ModelInfo,
   ModelRef,
 } from "./types/model";
-import { formatBytes } from "./utils/format";
+import { formatBytes, modelKey } from "./utils/format";
 import PopularSection from "./model-library/PopularSection";
 import SearchSection from "./model-library/SearchSection";
 import AdvancedSection from "./model-library/AdvancedSection";
@@ -44,18 +44,18 @@ export default function ModelLibrary({
   const [selectingKey, setSelectingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    refreshModels();
-  }, []);
-
-  async function refreshModels() {
+  const refreshModels = useCallback(async () => {
     try {
       const list = await invoke<ModelEntry[]>("list_models");
       setModels(list);
     } catch (err) {
       setError(`Failed to list models: ${err}`);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    refreshModels();
+  }, [refreshModels]);
 
   async function runSearch() {
     const q = searchQuery.trim();
@@ -96,7 +96,7 @@ export default function ModelLibrary({
   }
 
   async function handleSelect(entry: ModelEntry) {
-    const key = `${entry.repo_id}/${entry.filename}`;
+    const key = modelKey(entry);
     setSelectingKey(key);
     setError(null);
 

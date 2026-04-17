@@ -41,6 +41,7 @@ pub struct ModelMetadata {
 pub struct InferenceEngine {
     backend: LlamaBackend,
     model: LlamaModel,
+    metadata: ModelMetadata,
 }
 
 impl InferenceEngine {
@@ -59,7 +60,13 @@ impl InferenceEngine {
             LlamaModel::load_from_file(&backend, model_path.as_ref(), &model_params)
                 .map_err(|e| anyhow::anyhow!("failed to load model: {e:?}"))?;
 
-        Ok(Self { backend, model })
+        let metadata = read_metadata(&model);
+
+        Ok(Self {
+            backend,
+            model,
+            metadata,
+        })
     }
 
     /// Generate text from a raw prompt string.
@@ -188,17 +195,8 @@ impl InferenceEngine {
     }
 
     /// Read metadata from the loaded model.
-    pub fn model_metadata(&self) -> ModelMetadata {
-        let description = self
-            .model
-            .meta_val_str("general.name")
-            .unwrap_or_else(|_| "Unknown".to_string());
-
-        ModelMetadata {
-            description,
-            n_params: self.model.n_params(),
-            n_ctx_train: self.model.n_ctx_train(),
-        }
+    pub fn model_metadata(&self) -> &ModelMetadata {
+        &self.metadata
     }
 
     fn build_sampler(&self, params: &InferenceParams) -> LlamaSampler {
@@ -214,5 +212,17 @@ impl InferenceEngine {
                 LlamaSampler::dist(seed),
             ])
         }
+    }
+}
+
+fn read_metadata(model: &LlamaModel) -> ModelMetadata {
+    let description = model
+        .meta_val_str("general.name")
+        .unwrap_or_else(|_| "Unknown".to_string());
+
+    ModelMetadata {
+        description,
+        n_params: model.n_params(),
+        n_ctx_train: model.n_ctx_train(),
     }
 }

@@ -5,14 +5,8 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use crate::search::default_hub_origin;
-
 pub fn build_download_url(base_url: &str, repo_id: &str, filename: &str) -> String {
     format!("{base_url}/{repo_id}/resolve/main/{filename}")
-}
-
-pub fn default_base_url() -> &'static str {
-    default_hub_origin()
 }
 
 pub struct DownloadResult {
