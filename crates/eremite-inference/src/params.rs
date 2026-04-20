@@ -23,7 +23,7 @@ pub struct InferenceParams {
 impl Default for InferenceParams {
     fn default() -> Self {
         Self {
-            max_tokens: 512,
+            max_tokens: 1024,
             temperature: 0.8,
             top_p: 0.95,
             top_k: 40,
@@ -35,6 +35,7 @@ impl Default for InferenceParams {
 }
 
 /// A single message in a chat conversation.
+#[derive(Debug, Clone)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -68,7 +69,7 @@ mod tests {
     #[test]
     fn default_params_are_sensible() {
         let params = InferenceParams::default();
-        assert_eq!(params.max_tokens, 512);
+        assert_eq!(params.max_tokens, 1024);
         assert!((params.temperature - 0.8).abs() < f32::EPSILON);
         assert!((params.top_p - 0.95).abs() < f32::EPSILON);
         assert_eq!(params.top_k, 40);

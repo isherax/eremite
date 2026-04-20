@@ -173,6 +173,27 @@ impl InferenceEngine {
         on_event: impl FnMut(InferenceEvent),
         shutdown: &AtomicBool,
     ) -> Result<String> {
+        let prompt = self.format_chat_prompt(messages)?;
+        self.generate(&prompt, params, on_event, shutdown)
+    }
+
+    /// Count the tokens in the chat prompt that `generate_chat` would feed to
+    /// the model for the given messages.
+    ///
+    /// Applies the model's embedded chat template and tokenizes the result.
+    /// Used by `eremite-core` to budget conversation history against `n_ctx`
+    /// without actually running inference.
+    pub fn count_prompt_tokens(&self, messages: &[ChatMessage]) -> Result<usize> {
+        let prompt = self.format_chat_prompt(messages)?;
+        let tokens = self
+            .model
+            .str_to_token(&prompt, AddBos::Always)
+            .map_err(|e| anyhow::anyhow!("failed to tokenize prompt: {e:?}"))?;
+        Ok(tokens.len())
+    }
+
+    /// Apply the model's chat template to produce the raw prompt string.
+    fn format_chat_prompt(&self, messages: &[ChatMessage]) -> Result<String> {
         let llama_messages: Vec<LlamaChatMessage> = messages
             .iter()
             .map(|m| {
@@ -186,12 +207,9 @@ impl InferenceEngine {
             .chat_template(None)
             .map_err(|e| anyhow::anyhow!("model has no chat template: {e:?}"))?;
 
-        let prompt = self
-            .model
+        self.model
             .apply_chat_template(&template, &llama_messages, true)
-            .map_err(|e| anyhow::anyhow!("failed to apply chat template: {e:?}"))?;
-
-        self.generate(&prompt, params, on_event, shutdown)
+            .map_err(|e| anyhow::anyhow!("failed to apply chat template: {e:?}"))
     }
 
     /// Read metadata from the loaded model.

@@ -25,6 +25,12 @@ pub trait InferenceProvider {
         shutdown: &AtomicBool,
     ) -> Result<String>;
 
+    /// Count the tokens that `generate_chat` would feed to the model for the
+    /// given messages after applying the model's chat template.
+    ///
+    /// Implementations that have no model loaded should return an error.
+    fn count_prompt_tokens(&self, messages: &[ChatMessage]) -> Result<usize>;
+
     fn model_metadata(&self) -> Option<&ModelMetadata>;
 }
 
@@ -40,6 +46,10 @@ impl LlamaInference {
 
     fn engine_mut(&mut self) -> Result<&mut InferenceEngine> {
         self.engine.as_mut().ok_or_else(|| anyhow!("no model loaded"))
+    }
+
+    fn engine_ref(&self) -> Result<&InferenceEngine> {
+        self.engine.as_ref().ok_or_else(|| anyhow!("no model loaded"))
     }
 }
 
@@ -82,6 +92,10 @@ impl InferenceProvider for LlamaInference {
     ) -> Result<String> {
         self.engine_mut()?
             .generate(prompt, params, on_event, shutdown)
+    }
+
+    fn count_prompt_tokens(&self, messages: &[ChatMessage]) -> Result<usize> {
+        self.engine_ref()?.count_prompt_tokens(messages)
     }
 
     fn model_metadata(&self) -> Option<&ModelMetadata> {

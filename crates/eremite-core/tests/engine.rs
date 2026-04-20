@@ -14,6 +14,12 @@ struct MockInference {
     /// Tracks the messages passed to the last `generate_chat` call.
     last_messages: Vec<ChatMessage>,
     response: String,
+    /// `n_ctx_train` reported by `load_model`. Lets tests drive the auto-sizing
+    /// logic without touching production defaults.
+    n_ctx_train: u32,
+    /// Every `count_prompt_tokens` call records its argument here so tests can
+    /// assert trimming behaviour without running real inference.
+    token_count_invocations: std::cell::RefCell<Vec<Vec<(String, String)>>>,
 }
 
 impl MockInference {
@@ -22,7 +28,14 @@ impl MockInference {
             metadata: None,
             last_messages: Vec::new(),
             response: response.into(),
+            n_ctx_train: 2048,
+            token_count_invocations: std::cell::RefCell::new(Vec::new()),
         }
+    }
+
+    fn with_ctx_train(mut self, n_ctx_train: u32) -> Self {
+        self.n_ctx_train = n_ctx_train;
+        self
     }
 }
 
@@ -36,7 +49,7 @@ impl InferenceProvider for MockInference {
         let metadata = ModelMetadata {
             description: name,
             n_params: 1_000_000,
-            n_ctx_train: 2048,
+            n_ctx_train: self.n_ctx_train,
         };
         self.metadata = Some(metadata.clone());
         Ok(metadata)
@@ -78,6 +91,23 @@ impl InferenceProvider for MockInference {
             duration_ms: 1,
         });
         Ok(self.response.clone())
+    }
+
+    fn count_prompt_tokens(&self, messages: &[ChatMessage]) -> Result<usize> {
+        self.token_count_invocations.borrow_mut().push(
+            messages
+                .iter()
+                .map(|m| (m.role.clone(), m.content.clone()))
+                .collect(),
+        );
+        // Cheap deterministic proxy: 1 token per character of content plus a
+        // fixed 4-token overhead per message to approximate chat-template
+        // boilerplate. Enough to make budget arithmetic meaningful in tests.
+        let total: usize = messages
+            .iter()
+            .map(|m| m.content.chars().count() + 4)
+            .sum();
+        Ok(total)
     }
 
     fn model_metadata(&self) -> Option<&ModelMetadata> {
@@ -315,4 +345,95 @@ fn set_active_conversation_nonexistent_returns_error() {
     let mut engine = make_engine("hello");
     let fake_id = ConversationId::new();
     assert!(engine.set_active_conversation(fake_id).is_err());
+}
+
+// -- Context auto-sizing + sliding-window trim ---------------------------
+
+#[test]
+fn load_model_auto_sizes_n_ctx_from_metadata() {
+    let mock = MockInference::new("ok").with_ctx_train(8_192);
+    let mut engine = CoreEngine::new(mock, CoreConfig::default());
+
+    engine.load_model(Path::new("/fake/model.gguf")).unwrap();
+    assert_eq!(engine.config().inference_params.n_ctx, 8_192);
+}
+
+#[test]
+fn load_model_caps_huge_trained_contexts() {
+    let mock = MockInference::new("ok").with_ctx_train(131_072);
+    let mut engine = CoreEngine::new(mock, CoreConfig::default());
+
+    engine.load_model(Path::new("/fake/model.gguf")).unwrap();
+    assert_eq!(
+        engine.config().inference_params.n_ctx,
+        eremite_core::DEFAULT_CTX_CAP
+    );
+}
+
+#[test]
+fn load_model_override_wins_over_auto_sizing() {
+    let mock = MockInference::new("ok").with_ctx_train(8_192);
+    let config = CoreConfig {
+        ctx_size_override: Some(32_768),
+        ..CoreConfig::default()
+    };
+    let mut engine = CoreEngine::new(mock, config);
+
+    engine.load_model(Path::new("/fake/model.gguf")).unwrap();
+    assert_eq!(engine.config().inference_params.n_ctx, 32_768);
+}
+
+#[test]
+fn send_message_trims_old_history_but_keeps_it_in_conversation() {
+    // Tiny context so the sliding window actually triggers. With the mock
+    // counter returning `len(content) + 4` per message, a budget of around
+    // 30 tokens keeps roughly 2-3 messages in the model's view.
+    let mut config = CoreConfig::default();
+    config.inference_params.n_ctx = 256;
+    config.inference_params.max_tokens = 96;
+    // Budget = 256 - 96 - 128 = 32 tokens for history.
+    let mut engine = CoreEngine::new(MockInference::new("ok"), config);
+
+    let id = engine.create_conversation(Some("sys".to_string()));
+    let shutdown = no_shutdown();
+
+    for i in 0..6 {
+        engine
+            .send_message(
+                id,
+                &format!("user message number {i} with padding"),
+                &mut |_| {},
+                &shutdown,
+            )
+            .unwrap();
+    }
+
+    // Full history is preserved in the conversation (12 messages: 6 user + 6
+    // assistant).
+    let conv = engine.conversation(id).unwrap();
+    assert_eq!(conv.messages().len(), 12);
+
+    // But the last call into the inference layer received a trimmed list:
+    // strictly smaller than 1 (system) + 11 (history up to and including the
+    // latest user message, not yet answered) = 12. Also, the first trimmed
+    // message must be the system prompt and the last must be the most recent
+    // user message.
+    let last_sent = &engine.inference().last_messages;
+    assert!(
+        last_sent.len() < 12,
+        "expected sliding window to drop older turns, got {} messages",
+        last_sent.len()
+    );
+    assert_eq!(last_sent.first().unwrap().role, "system");
+    assert_eq!(last_sent.first().unwrap().content, "sys");
+    let latest = last_sent.last().unwrap();
+    assert_eq!(latest.role, "user");
+    assert_eq!(latest.content, "user message number 5 with padding");
+
+    // And the trimmer actually invoked count_prompt_tokens at least once.
+    assert!(!engine
+        .inference()
+        .token_count_invocations
+        .borrow()
+        .is_empty());
 }

@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 pub struct CoreConfig {
     pub inference_params: InferenceParams,
     pub system_prompt: Option<String>,
+    /// Optional override for the context window size. When `None`, the engine
+    /// auto-sizes `n_ctx` on model load based on the model's trained context
+    /// length. A future settings surface can populate this field to force a
+    /// specific size.
+    #[serde(default)]
+    pub ctx_size_override: Option<u32>,
 }
 
 #[cfg(test)]
