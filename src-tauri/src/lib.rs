@@ -448,22 +448,37 @@ fn spawn_eager_load(
 fn install_exit_handler(app: tauri::App, shutdown: Arc<AtomicBool>) {
     app.run(move |app_handle, event| {
         if let RunEvent::ExitRequested { api, .. } = &event {
-            shutdown.store(true, Ordering::Relaxed);
+            // Latch so the `ExitRequested` we re-enter via handle.exit(0)
+            // isn't prevented a second time.
+            if shutdown.swap(true, Ordering::AcqRel) {
+                return;
+            }
             api.prevent_exit();
 
             let engine = {
                 let state = app_handle.state::<AppState>();
                 Arc::clone(&state.engine)
             };
+            #[cfg(not(target_os = "macos"))]
             let handle = app_handle.clone();
 
             std::thread::spawn(move || {
-                // Acquiring the lock waits for any in-flight inference to
-                // finish (it will see the shutdown flag and bail early).
-                // Once we hold the lock, no new work can start; the guard
-                // is released at the end of this scope as Tauri tears down.
+                // Wait for any in-flight inference to see the shutdown flag
+                // and bail, then hold the lock so nothing new starts.
                 let _guard = lock_tolerant(&engine);
-                handle.exit(0);
+
+                // macOS: skip atexit/C++ static dtors -- ggml-metal's static
+                // device vector aborts in `ggml_metal_rsets_free` at exit.
+                #[cfg(target_os = "macos")]
+                unsafe {
+                    libc::_exit(0);
+                }
+
+                #[cfg(not(target_os = "macos"))]
+                {
+                    drop(_guard);
+                    handle.exit(0);
+                }
             });
         }
     });
