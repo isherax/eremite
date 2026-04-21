@@ -177,3 +177,59 @@ body {
   color: var(--text-muted);
   opacity: 0.6;
 }
+
+/* Settings view */
+
+.settings {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-label {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.settings-help {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.settings-textarea {
+  resize: vertical;
+  min-height: 140px;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-status {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.settings-status.error {
+  color: var(--danger);
+}

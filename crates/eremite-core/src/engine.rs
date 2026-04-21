@@ -92,6 +92,21 @@ impl<I: InferenceProvider> CoreEngine<I> {
         self.inference.model_metadata()
     }
 
+    /// Update the default system prompt used by newly created conversations
+    /// and apply it to the currently active conversation (if any).
+    ///
+    /// Pass `None` to clear the prompt. Message history on the active
+    /// conversation is preserved; only the prompt prepended at inference
+    /// time changes.
+    pub fn set_system_prompt(&mut self, prompt: Option<String>) {
+        self.config.system_prompt = prompt.clone();
+        if let Some(id) = self.active_conversation {
+            if let Some(conv) = self.conversations.get_mut(&id) {
+                conv.set_system_prompt(prompt);
+            }
+        }
+    }
+
     // -- Conversation management ------------------------------------------
 
     /// Create a new conversation, optionally with a system prompt.

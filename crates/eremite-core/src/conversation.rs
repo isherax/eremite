@@ -98,6 +98,14 @@ impl Conversation {
         self.system_prompt.as_deref()
     }
 
+    /// Replace the system prompt on an existing conversation. Message
+    /// history is preserved; only the prompt prepended at inference time
+    /// changes.
+    pub fn set_system_prompt(&mut self, prompt: Option<String>) {
+        self.system_prompt = prompt;
+        self.updated_at = Utc::now();
+    }
+
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }

@@ -349,6 +349,18 @@ async fn send_message(
 }
 
 #[tauri::command]
+fn set_system_prompt(state: State<'_, AppState>, prompt: String) -> Result<(), String> {
+    let trimmed = if prompt.trim().is_empty() {
+        None
+    } else {
+        Some(prompt)
+    };
+    let mut engine = state.engine.lock().map_err(|e| e.to_string())?;
+    engine.set_system_prompt(trimmed);
+    Ok(())
+}
+
+#[tauri::command]
 fn get_messages(state: State<'_, AppState>) -> Result<Vec<MessageView>, String> {
     let engine = state.engine.lock().map_err(|e| e.to_string())?;
     let conv_id = engine
@@ -542,6 +554,7 @@ pub fn run() {
             select_model,
             send_message,
             get_messages,
+            set_system_prompt,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

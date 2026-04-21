@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Chat from "./Chat";
 import ModelLibrary from "./ModelLibrary";
+import Settings, { SYSTEM_PROMPT_STORAGE_KEY } from "./Settings";
 import type {
   ModelInfo,
   ModelReady,
@@ -11,7 +12,7 @@ import type {
 import { formatLoadingModelName, formatParams } from "./utils/format";
 import { useTauriEvent } from "./hooks/useTauriEvent";
 
-type View = "models" | "chat";
+type View = "models" | "chat" | "settings";
 
 export default function App() {
   const [view, setView] = useState<View>("models");
@@ -22,6 +23,16 @@ export default function App() {
 
   useEffect(() => {
     const init = async () => {
+      const storedPrompt =
+        window.localStorage.getItem(SYSTEM_PROMPT_STORAGE_KEY) ?? "";
+      if (storedPrompt) {
+        try {
+          await invoke("set_system_prompt", { prompt: storedPrompt });
+        } catch {
+          // Non-fatal: the backend will fall back to no system prompt.
+        }
+      }
+
       const state = await invoke<StartupState | null>("get_startup_state");
 
       if (state?.status === "ready" && state.model_info) {
@@ -81,6 +92,14 @@ export default function App() {
           >
             Models
           </button>
+          <button
+            type="button"
+            className={`nav-tab ${view === "settings" ? "active" : ""}`}
+            onClick={() => setView("settings")}
+            aria-current={view === "settings" ? "page" : undefined}
+          >
+            Settings
+          </button>
         </nav>
         {view === "chat" && (
           <div className="header-chat-context">
@@ -103,6 +122,8 @@ export default function App() {
           startupError={startupError}
           onDismissStartupError={() => setStartupError(null)}
         />
+      ) : view === "settings" ? (
+        <Settings />
       ) : (
         <Chat model={model} loadingModel={loadingModel} />
       )}
